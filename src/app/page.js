@@ -6,9 +6,12 @@ import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc, query, orderBy,
 export default function Home() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [password, setPassword] = useState("");
+  
+  // 日付管理
   const [year, setYear] = useState(0);
   const [month, setMonth] = useState(0);
   const [daysInMonth, setDaysInMonth] = useState(30);
+  
   const [activeTab, setActiveTab] = useState("input");
 
   // ▼ データ
@@ -56,21 +59,53 @@ export default function Home() {
     fridge: "冷蔵庫", washing: "洗濯機", ac: "エアコン", tv: "TV", mobile: "携帯", pc: "PC"
   };
 
+  // --- ▼▼▼ 日付切り替えロジックの変更 ▼▼▼ ---
+  // isAdmin が変わるたびに、あるいは初回に実行
   useEffect(() => {
-    const targetDate = new Date();
-    targetDate.setMonth(targetDate.getMonth() + 1);
-    if (new Date().getDate() >= 20) targetDate.setMonth(targetDate.getMonth() + 1);
-    
-    const y = targetDate.getFullYear();
-    const m = targetDate.getMonth() + 1;
-    setYear(y); setMonth(m);
-    setDaysInMonth(new Date(y, m, 0).getDate());
+    const today = new Date();
+    let targetY = today.getFullYear();
+    let targetM = today.getMonth() + 1; // JSの月は0始まりなので+1
 
+    if (isAdmin) {
+      // 【管理者】毎月10日に「翌月」へ
+      // 今日が10日以上なら翌月、そうでなければ当月
+      if (today.getDate() >= 10) {
+        targetM += 1;
+      }
+    } else {
+      // 【提出側】毎月25日に「翌々月」へ
+      // 基本は翌月提出。25日を過ぎたら翌々月提出
+      if (today.getDate() >= 25) {
+        targetM += 2;
+      } else {
+        targetM += 1;
+      }
+    }
+
+    // 年またぎの計算 (例: 12月の翌月=13月 -> 翌年1月)
+    const dateObj = new Date(targetY, targetM - 1, 1);
+    const finalYear = dateObj.getFullYear();
+    const finalMonth = dateObj.getMonth() + 1;
+
+    setYear(finalYear);
+    setMonth(finalMonth);
+    setDaysInMonth(new Date(finalYear, finalMonth, 0).getDate());
+
+  }, [isAdmin]); // 管理者モード切り替え時に再計算
+
+  // 年・月が確定したらデータを再取得
+  useEffect(() => {
+    if (year === 0 || month === 0) return;
+    fetchConfig(year, month);
+    fetchDeterminedShift(year, month);
+    fetchAllRequests(year, month);
+  }, [year, month]);
+
+  // スタッフリストは年月関係ないので初回のみ
+  useEffect(() => {
     fetchStaffs();
-    fetchConfig(y, m);
-    fetchDeterminedShift(y, m);
-    fetchAllRequests(y, m);
   }, []);
+  // ----------------------------------------------------
 
   const fetchStaffs = async () => {
     try {
@@ -93,6 +128,13 @@ export default function Home() {
         setMinSkills(data.minSkills || { fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 });
         setMinStaffCounts(data.minStaffCounts || { open: 3, close: 3 });
         setMeetingSchedule(data.meetings || {});
+      } else {
+        // データがない月の場合、初期値をセット
+        setDailySales({});
+        setConfigCaps({ salesLow: 100, hoursLow: 70, salesHigh: 500, hoursHigh: 100 });
+        setMinSkills({ fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 });
+        setMinStaffCounts({ open: 3, close: 3 });
+        setMeetingSchedule({});
       }
     } catch (e) { console.log("Config fetch error"); }
   };
@@ -102,6 +144,7 @@ export default function Home() {
       const docId = `${y}-${m}`;
       const snap = await getDoc(doc(db, "determined_shifts", docId));
       if (snap.exists()) setDeterminedSchedule(snap.data().schedule || {});
+      else setDeterminedSchedule({});
     } catch (e) { console.log("Determined shift fetch error"); }
   };
 
@@ -550,6 +593,9 @@ export default function Home() {
                               onBlur={(e)=>updateStaffParam(s, 'maxDays', Number(e.target.value))}
                             />
                             <span className="text-[10px]">日</span>
+                            <button onClick={()=>toggleKeyStatus(s,'canOpen')} className={`px-2 py-0.5 rounded border ${s.canOpen?'bg-orange-100 text-orange-700':'bg-gray-100 text-gray-400'}`}>鍵開</button>
+                            <button onClick={()=>toggleKeyStatus(s,'canClose')} className={`px-2 py-0.5 rounded border ${s.canClose?'bg-indigo-100 text-indigo-700':'bg-gray-100 text-gray-400'}`}>鍵締</button>
+                            <button onClick={()=>openSkillModal(s)} className="bg-gray-100 px-2 py-0.5 rounded border">スキル</button>
                             
                             {isPart && (
                                <div className="ml-auto flex items-center gap-1">
@@ -559,10 +605,6 @@ export default function Home() {
                                  </select>
                                </div>
                             )}
-
-                            <button onClick={()=>toggleKeyStatus(s,'canOpen')} className={`px-2 py-0.5 rounded border ${s.canOpen?'bg-orange-100 text-orange-700':'bg-gray-100 text-gray-400'}`}>鍵開</button>
-                            <button onClick={()=>toggleKeyStatus(s,'canClose')} className={`px-2 py-0.5 rounded border ${s.canClose?'bg-indigo-100 text-indigo-700':'bg-gray-100 text-gray-400'}`}>鍵締</button>
-                            <button onClick={()=>openSkillModal(s)} className="bg-gray-100 px-2 py-0.5 rounded border">スキル</button>
                           </div>
                           <div className="mt-2 pt-1 border-t flex flex-wrap gap-1">
                              <span className="text-gray-400">会議:</span>
