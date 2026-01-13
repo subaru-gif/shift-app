@@ -1,4 +1,5 @@
-"use client";
+import { db } from "../lib/firebase"; // これを追加
+"use client"
 import { useState, useEffect } from "react";
 
 export default function Home() {
