@@ -15,6 +15,5 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 
-// ▼▼▼ この行がエラーの原因です！必ず入れてください ▼▼▼
+// ▼▼▼ これが一番大事な行です！ ▼▼▼
 export { db };
-// fix

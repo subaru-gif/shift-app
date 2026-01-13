@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 // ▼ Firebaseを使うための部品をインポート
-import { db } from "../lib/firebase";
+import { db } from "../lib/firebase.js";
 import { collection, addDoc } from "firebase/firestore";
 
 export default function Home() {
