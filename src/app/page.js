@@ -14,11 +14,11 @@ export default function Home() {
   const [staffs, setStaffs] = useState([]);
   const [selectedStaffId, setSelectedStaffId] = useState("");
   
-  // ▼ 提出データ（{ "1": { type: "希望休" }, "2": { type: "出勤", start: "09:30", end: "19:00" } } みたいな形）
+  // ▼ 提出データ
   const [requests, setRequests] = useState({});
   
   // ▼ ポップアップ用
-  const [selectedDay, setSelectedDay] = useState(null); // 何日を選んでいるか
+  const [selectedDay, setSelectedDay] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   
   // ▼ 管理者用フォーム
@@ -27,12 +27,21 @@ export default function Home() {
 
   // 初期化
   useEffect(() => {
+    const targetDate = new Date();
+    
+    // 【ロジック変更】
+    // 1. まず「来月」に設定する（例: 1月なら2月）
+    targetDate.setMonth(targetDate.getMonth() + 1);
+
+    // 2. もし今日が「20日」以降なら、さらに1ヶ月進める（再来月にする）
+    // （例: 1月20日なら、2月→3月になる）
     const today = new Date();
-    if (today.getDate() >= 15) {
-      today.setMonth(today.getMonth() + 1);
+    if (today.getDate() >= 20) {
+      targetDate.setMonth(targetDate.getMonth() + 1);
     }
-    const y = today.getFullYear();
-    const m = today.getMonth() + 1;
+
+    const y = targetDate.getFullYear();
+    const m = targetDate.getMonth() + 1; // 表示用（0始まりなので+1）
     setYear(y);
     setMonth(m);
     
@@ -107,6 +116,15 @@ export default function Home() {
     } catch (error) {
       console.error(error);
       alert("送信エラーが発生しました");
+    }
+  };
+
+  // ▼ 管理者ログイン（パスワード変更済み）
+  const handleLogin = () => {
+    if (password === "333191") { // ← ここを変更しました
+      setIsAdmin(true);
+    } else {
+      alert("パスワードが違います");
     }
   };
 
@@ -275,7 +293,7 @@ export default function Home() {
                   <summary className="list-none cursor-pointer p-2">Admin</summary>
                   <div className="flex gap-1 justify-end p-2">
                     <input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="border rounded w-16" />
-                    <button onClick={() => password==="admin123" && setIsAdmin(true)} className="bg-gray-400 text-white px-2 rounded">Go</button>
+                    <button onClick={handleLogin} className="bg-gray-400 text-white px-2 rounded">Go</button>
                   </div>
                 </details>
              </div>
