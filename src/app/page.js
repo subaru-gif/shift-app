@@ -14,8 +14,10 @@ export default function Home() {
   const [staffs, setStaffs] = useState([]);
   const [selectedStaffId, setSelectedStaffId] = useState("");
   const [requests, setRequests] = useState({});
-  // 売上設定（日別） { "1": 100, "2": 80 ... }
-  const [dailySales, setDailySales] = useState({}); 
+  const [dailySales, setDailySales] = useState({});
+  
+  // ▼▼▼ 新機能：確定したシフトデータ ▼▼▼
+  const [determinedSchedule, setDeterminedSchedule] = useState({}); // { "1": [{name:"田中", shift:"A"}...], ... }
 
   // ▼ UI用
   const [selectedDay, setSelectedDay] = useState(null);
@@ -29,13 +31,11 @@ export default function Home() {
 
   // 初期化
   useEffect(() => {
-    // 日付ロジック：基本は来月。20日を過ぎたら再来月。
     const targetDate = new Date();
-    targetDate.setMonth(targetDate.getMonth() + 1); // まず来月にする
-    
+    targetDate.setMonth(targetDate.getMonth() + 1);
     const today = new Date();
     if (today.getDate() >= 20) {
-      targetDate.setMonth(targetDate.getMonth() + 1); // 20日過ぎならもう1ヶ月進める
+      targetDate.setMonth(targetDate.getMonth() + 1);
     }
 
     const y = targetDate.getFullYear();
@@ -46,6 +46,7 @@ export default function Home() {
 
     fetchStaffs();
     fetchConfig(y, m);
+    fetchDeterminedShift(y, m); // ▼ 確定シフトも読み込む
   }, []);
 
   const fetchStaffs = async () => {
@@ -58,62 +59,52 @@ export default function Home() {
     } catch (e) { console.log("Error fetching staffs"); }
   };
 
-  // 月ごとの設定（日別売上）を取得
   const fetchConfig = async (y, m) => {
     try {
       const docId = `${y}-${m}`; 
-      const docRef = doc(db, "monthlyConfig", docId);
-      const docSnap = await getDoc(docRef);
-      
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setDailySales(data.dailySales || {});
-      } else {
-        // データがない（月が変わった）場合は空っぽでスタート
-        setDailySales({});
-      }
+      const docSnap = await getDoc(doc(db, "monthlyConfig", docId));
+      if (docSnap.exists()) setDailySales(docSnap.data().dailySales || {});
+      else setDailySales({});
     } catch (e) { console.log("Config fetch error"); }
   };
 
-  // ▼ 売上設定を保存
+  // ▼▼▼ 新機能：確定シフトを取得する ▼▼▼
+  const fetchDeterminedShift = async (y, m) => {
+    try {
+      const docId = `${y}-${m}`;
+      const docSnap = await getDoc(doc(db, "determined_shifts", docId));
+      if (docSnap.exists()) {
+        setDeterminedSchedule(docSnap.data().schedule || {});
+      } else {
+        setDeterminedSchedule({}); // まだ決まっていない
+      }
+    } catch (e) { console.log("Determined shift fetch error"); }
+  };
+
   const saveSalesConfig = async () => {
     const docId = `${year}-${month}`;
     try {
-      // dailyConfigとして保存
-      await setDoc(doc(db, "monthlyConfig", docId), { 
-        dailySales: dailySales,
-        updatedAt: new Date()
-      }, { merge: true });
+      await setDoc(doc(db, "monthlyConfig", docId), { dailySales, updatedAt: new Date() }, { merge: true });
       alert("売上設定を保存しました");
     } catch (e) { alert("保存失敗"); }
   };
 
-  // ▼ 売上入力欄の変更ハンドラ
   const handleSalesChange = (day, value) => {
-    setDailySales(prev => ({
-      ...prev,
-      [day]: value // 文字列のまま保持、計算時にNumberにする
-    }));
+    setDailySales(prev => ({ ...prev, [day]: value }));
   };
 
-  // ▼ スタッフ追加
   const handleAddStaff = async () => {
     if (!newStaffName) return;
     const rankMap = { "店長": 1, "リーダー": 2, "社員": 3, "パートナー": 4, "新規パートナー": 5 };
     try {
       await addDoc(collection(db, "staffs"), { 
-        name: newStaffName, 
-        rank: newStaffRank, 
-        rankId: rankMap[newStaffRank] || 99,
-        canClose: false,
-        skills: { fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 } // 初期値0
+        name: newStaffName, rank: newStaffRank, rankId: rankMap[newStaffRank] || 99,
+        canClose: false, skills: { fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 }
       });
-      setNewStaffName(""); 
-      fetchStaffs();
+      setNewStaffName(""); fetchStaffs();
     } catch (error) { alert("登録失敗"); }
   };
 
-  // ▼ 締め作業OK/NG
   const toggleCanClose = async (staff) => {
     const newVal = !staff.canClose;
     setStaffs(prev => prev.map(s => s.id === staff.id ? { ...s, canClose: newVal } : s));
@@ -125,25 +116,18 @@ export default function Home() {
     setSkillModalOpen(true);
   };
 
-  // ▼ スキル保存
   const saveSkills = async () => {
     if (!editingStaff) return;
     try {
       await updateDoc(doc(db, "staffs", editingStaff.id), { skills: editingStaff.skills });
-      setSkillModalOpen(false);
-      fetchStaffs();
+      setSkillModalOpen(false); fetchStaffs();
     } catch (e) { alert("スキル保存失敗"); }
   };
 
-  // ▼ スキル値のトグル処理（同じ値なら0にする）
   const handleSkillClick = (key, num) => {
     setEditingStaff(prev => {
       const currentVal = prev.skills?.[key] || 0;
-      const newVal = (currentVal === num) ? 0 : num; // 同じなら0、違えばその数字
-      return {
-        ...prev,
-        skills: { ...prev.skills, [key]: newVal }
-      };
+      return { ...prev, skills: { ...prev.skills, [key]: (currentVal === num) ? 0 : num } };
     });
   };
 
@@ -185,7 +169,6 @@ export default function Home() {
     <div className="min-h-screen bg-gray-50 p-4 font-sans text-gray-800 pb-20">
       <div className="max-w-md mx-auto bg-white shadow-lg rounded-xl overflow-hidden min-h-[600px] relative">
         
-        {/* ヘッダー */}
         <div className="bg-blue-600 p-4 text-white text-center shadow-md sticky top-0 z-10">
           <h1 className="text-xl font-bold">
             {year}年 {month}月 シフト{isAdmin ? "管理" : "提出"}
@@ -194,7 +177,6 @@ export default function Home() {
 
         <div className="p-4">
           {!isAdmin && (
-            // ▼▼▼ 一般スタッフ用画面 ▼▼▼
             <div>
               <div className="mb-4 bg-blue-50 p-3 rounded-lg border border-blue-100">
                 <label className="block text-xs font-bold mb-1 text-blue-800">スタッフ選択</label>
@@ -210,24 +192,54 @@ export default function Home() {
                 </select>
               </div>
 
+              {/* ▼ シフトが決まっている場合のお知らせ */}
+              {Object.keys(determinedSchedule).length > 0 && (
+                <div className="mb-4 p-2 bg-green-100 text-green-800 text-xs font-bold text-center rounded">
+                  🎉 シフトが確定しました！カレンダーを確認してください。
+                </div>
+              )}
+
               <div className="grid grid-cols-7 gap-1 mb-6 text-center text-sm select-none">
                 {['日','月','火','水','木','金','土'].map((d,i) => (
                   <div key={i} className={`font-bold py-1 ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-400'}`}>{d}</div>
                 ))}
                 {[...Array(daysInMonth)].map((_, i) => {
-                  const d = i + 1; const req = requests[d];
-                  let bg="bg-white", txt="text-gray-700", bd="border-gray-200";
-                  if(req) {
-                    if(req.type==="希望休") { bg="bg-red-100"; txt="text-red-600 font-bold"; bd="border-red-200"; }
-                    else if(req.type==="有給") { bg="bg-pink-100"; txt="text-pink-600 font-bold"; bd="border-pink-200"; }
-                    else { bg="bg-blue-100"; txt="text-blue-700 font-bold"; bd="border-blue-200"; }
+                  const d = i + 1; 
+                  const d_str = str(d);
+                  
+                  // ▼ 確定シフトがあるか探す
+                  let displayText = "";
+                  let isDetermined = false;
+                  
+                  if (selectedStaffId && determinedSchedule[d_str]) {
+                     // 自分のIDが含まれているか？
+                     const myShift = determinedSchedule[d_str].find(item => item.staffId === selectedStaffId);
+                     if (myShift) {
+                         displayText = `★${myShift.shift}`; // "★A" みたいに表示
+                         isDetermined = true;
+                     }
                   }
+
+                  // 確定がないなら、希望を表示
+                  const req = requests[d];
+                  let bg="bg-white", txt="text-gray-700", bd="border-gray-200";
+
+                  if (isDetermined) {
+                      // 確定時はスペシャルカラー
+                      bg="bg-yellow-100"; txt="text-yellow-700 font-bold"; bd="border-yellow-400";
+                  } else if (req) {
+                      if(req.type==="希望休") { bg="bg-red-100"; txt="text-red-600 font-bold"; bd="border-red-200"; }
+                      else if(req.type==="有給") { bg="bg-pink-100"; txt="text-pink-600 font-bold"; bd="border-pink-200"; }
+                      else { bg="bg-blue-100"; txt="text-blue-700 font-bold"; bd="border-blue-200"; }
+                      displayText = req.type.substring(0,2);
+                  }
+
                   return (
-                    <div key={d} onClick={() => handleDateClick(d)}
+                    <div key={d} onClick={() => !isDetermined && handleDateClick(d)}
                       className={`aspect-square border rounded flex flex-col justify-center items-center cursor-pointer ${bg} ${bd}`}
                     >
                       <span className="text-sm">{d}</span>
-                      {req && <span className="text-[10px]">{req.type.substring(0,2)}</span>}
+                      {displayText && <span className="text-[10px]">{displayText}</span>}
                     </div>
                   );
                 })}
@@ -241,21 +253,40 @@ export default function Home() {
           )}
 
           {isAdmin && (
-            // ▼▼▼ 管理者用画面 ▼▼▼
             <div>
               <div className="flex justify-between items-center mb-6 border-b pb-2">
                 <h2 className="font-bold text-lg">管理者設定</h2>
                 <button onClick={() => setIsAdmin(false)} className="text-xs text-blue-600 underline">ログアウト</button>
               </div>
 
-              {/* 1. 日別売上設定 (カレンダー形式) */}
+              {/* ▼▼▼ 完成したシフト一覧 ▼▼▼ */}
+              {Object.keys(determinedSchedule).length > 0 && (
+                 <div className="mb-8 p-4 bg-green-50 border border-green-200 rounded">
+                    <h3 className="font-bold text-sm text-green-800 mb-2">🎉 完成したシフト表 ({month}月)</h3>
+                    <div className="text-xs space-y-2 h-64 overflow-y-auto">
+                        {Object.keys(determinedSchedule).sort((a,b)=>Number(a)-Number(b)).map(day => (
+                            <div key={day} className="border-b pb-1">
+                                <span className="font-bold inline-block w-8">{day}日:</span>
+                                {determinedSchedule[day].length > 0 ? (
+                                    determinedSchedule[day].map((s, idx) => (
+                                        <span key={idx} className="mr-2">
+                                            {s.name}[<span className="font-bold text-green-700">{s.shift}</span>]
+                                        </span>
+                                    ))
+                                ) : (
+                                    <span className="text-gray-400">休み</span>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                 </div>
+              )}
+
               <div className="mb-8 bg-yellow-50 p-4 rounded border border-yellow-200">
                 <div className="flex justify-between items-center mb-2">
                   <h3 className="font-bold text-sm text-yellow-800">💰 前年売上入力 ({month}月)</h3>
                   <button onClick={saveSalesConfig} className="bg-yellow-600 text-white px-3 py-1 rounded text-xs font-bold shadow">保存する</button>
                 </div>
-                <p className="text-[10px] text-gray-500 mb-2">※日別の売上(万円)を入力してください</p>
-                
                 <div className="grid grid-cols-7 gap-1 text-center text-xs">
                    {['日','月','火','水','木','金','土'].map((d,i) => (
                       <div key={i} className={`font-bold ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-400'}`}>{d}</div>
@@ -266,11 +297,8 @@ export default function Home() {
                         <div key={d} className="bg-white border rounded p-1 flex flex-col items-center">
                           <span className="text-gray-400 mb-1">{d}</span>
                           <input 
-                            type="number" 
-                            className="w-full text-center border-b border-yellow-200 focus:border-yellow-500 focus:outline-none text-gray-700 font-bold bg-transparent"
-                            placeholder="0"
-                            value={dailySales[d] || ""}
-                            onChange={(e) => handleSalesChange(d, e.target.value)}
+                            type="number" className="w-full text-center border-b border-yellow-200 focus:outline-none bg-transparent" placeholder="0"
+                            value={dailySales[d] || ""} onChange={(e) => handleSalesChange(d, e.target.value)}
                           />
                         </div>
                       );
@@ -278,7 +306,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* 2. スタッフ登録 */}
               <div className="mb-6 p-4 rounded bg-gray-50 border">
                 <h3 className="font-bold text-sm mb-2">👤 スタッフ追加</h3>
                 <div className="flex flex-wrap gap-2">
@@ -290,7 +317,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* 3. スタッフリスト */}
               <h3 className="font-bold text-sm mb-2">登録スタッフ一覧</h3>
               <div className="space-y-2 pb-10">
                 {staffs.map((s) => (
@@ -298,15 +324,8 @@ export default function Home() {
                     <div>
                       <div className="font-bold">{s.name} <span className="text-xs font-normal bg-gray-100 px-1 rounded">{s.rank}</span></div>
                       <div className="flex gap-2 mt-1">
-                        <button 
-                          onClick={() => toggleCanClose(s)}
-                          className={`text-xs px-2 py-0.5 rounded border ${s.canClose ? 'bg-indigo-100 text-indigo-700 border-indigo-300' : 'bg-gray-100 text-gray-400'}`}
-                        >
-                          締め: {s.canClose ? 'OK' : 'NG'}
-                        </button>
-                        <button onClick={() => openSkillModal(s)} className="text-xs bg-gray-100 px-2 py-0.5 rounded border hover:bg-gray-200">
-                          スキル設定
-                        </button>
+                        <button onClick={() => toggleCanClose(s)} className={`text-xs px-2 py-0.5 rounded border ${s.canClose ? 'bg-indigo-100 text-indigo-700 border-indigo-300' : 'bg-gray-100 text-gray-400'}`}>締め: {s.canClose?'OK':'NG'}</button>
+                        <button onClick={() => openSkillModal(s)} className="text-xs bg-gray-100 px-2 py-0.5 rounded border hover:bg-gray-200">スキル設定</button>
                       </div>
                     </div>
                     <button onClick={async()=>{if(confirm("削除しますか？")) { await deleteDoc(doc(db,"staffs",s.id)); fetchStaffs(); }}} className="text-red-400 text-xs px-2">削除</button>
@@ -329,7 +348,6 @@ export default function Home() {
           )}
         </div>
 
-        {/* ▼▼▼ 入力モーダル（シフト希望） ▼▼▼ */}
         {modalOpen && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
@@ -362,7 +380,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* ▼▼▼ スキル設定モーダル（トグル対応） ▼▼▼ */}
         {skillModalOpen && editingStaff && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setSkillModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
@@ -376,13 +393,7 @@ export default function Home() {
                       <span className="text-sm font-bold">{label}</span>
                       <div className="flex gap-1">
                         {[1, 2, 3, 4, 5].map(num => (
-                          <button
-                            key={num}
-                            onClick={() => handleSkillClick(key, num)}
-                            className={`w-8 h-8 rounded border text-sm transition-colors ${currentVal === num ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}
-                          >
-                            {num}
-                          </button>
+                          <button key={num} onClick={() => handleSkillClick(key, num)} className={`w-8 h-8 rounded border text-sm transition-colors ${currentVal === num ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}>{num}</button>
                         ))}
                       </div>
                     </div>
@@ -401,3 +412,6 @@ export default function Home() {
     </div>
   );
 }
+
+// 簡易ヘルパー関数: 数値を文字列に
+function str(n) { return String(n); }
