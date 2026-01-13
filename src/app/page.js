@@ -15,8 +15,6 @@ export default function Home() {
   const [selectedStaffId, setSelectedStaffId] = useState("");
   const [requests, setRequests] = useState({});
   const [dailySales, setDailySales] = useState({});
-  
-  // ▼▼▼ 新機能：確定したシフトデータ ▼▼▼
   const [determinedSchedule, setDeterminedSchedule] = useState({}); // { "1": [{name:"田中", shift:"A"}...], ... }
 
   // ▼ UI用
@@ -24,8 +22,6 @@ export default function Home() {
   const [modalOpen, setModalOpen] = useState(false);
   const [skillModalOpen, setSkillModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState(null);
-  
-  // ▼ 管理者入力用
   const [newStaffName, setNewStaffName] = useState("");
   const [newStaffRank, setNewStaffRank] = useState("パートナー");
 
@@ -46,7 +42,7 @@ export default function Home() {
 
     fetchStaffs();
     fetchConfig(y, m);
-    fetchDeterminedShift(y, m); // ▼ 確定シフトも読み込む
+    fetchDeterminedShift(y, m);
   }, []);
 
   const fetchStaffs = async () => {
@@ -68,7 +64,6 @@ export default function Home() {
     } catch (e) { console.log("Config fetch error"); }
   };
 
-  // ▼▼▼ 新機能：確定シフトを取得する ▼▼▼
   const fetchDeterminedShift = async (y, m) => {
     try {
       const docId = `${y}-${m}`;
@@ -76,7 +71,7 @@ export default function Home() {
       if (docSnap.exists()) {
         setDeterminedSchedule(docSnap.data().schedule || {});
       } else {
-        setDeterminedSchedule({}); // まだ決まっていない
+        setDeterminedSchedule({});
       }
     } catch (e) { console.log("Determined shift fetch error"); }
   };
@@ -165,19 +160,64 @@ export default function Home() {
   const currentStaff = staffs.find(s => s.id === selectedStaffId);
   const isEmployee = currentStaff && ["店長", "リーダー", "社員"].includes(currentStaff.rank);
 
+  // ▼▼▼ シフト表示変換用（A→早） ▼▼▼
+  const shiftLabel = (code) => {
+    if(code === "A") return "早";
+    if(code === "B") return "中";
+    if(code === "C") return "遅";
+    return code || "";
+  };
+
+  // ▼▼▼ CSVダウンロード機能（Excel用） ▼▼▼
+  const downloadCSV = () => {
+    // 1. ヘッダーを作る: 名前, 役職, 1, 2, 3 ...
+    let csvContent = "\uFEFF"; // Excelで文字化けしないおまじない(BOM)
+    const header = ["名前", "役職", ...[...Array(daysInMonth)].map((_,i)=>`${i+1}日`)];
+    csvContent += header.join(",") + "\n";
+
+    // 2. スタッフごとに行を作る
+    staffs.forEach(staff => {
+      const row = [staff.name, staff.rank];
+      for(let d=1; d<=daysInMonth; d++) {
+        const d_str = str(d);
+        // その日のシフトを探す
+        const dayData = determinedSchedule[d_str] || [];
+        const myShift = dayData.find(s => s.staffId === staff.id);
+        row.push(myShift ? shiftLabel(myShift.shift) : ""); // シフトがあれば入れる、なければ空
+      }
+      csvContent += row.join(",") + "\n";
+    });
+
+    // 3. ダウンロード発火
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `${year}年${month}月シフト表.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 p-4 font-sans text-gray-800 pb-20">
-      <div className="max-w-md mx-auto bg-white shadow-lg rounded-xl overflow-hidden min-h-[600px] relative">
+      <div className="max-w-6xl mx-auto bg-white shadow-lg rounded-xl overflow-hidden min-h-[600px] relative">
         
-        <div className="bg-blue-600 p-4 text-white text-center shadow-md sticky top-0 z-10">
-          <h1 className="text-xl font-bold">
+        <div className="bg-blue-600 p-4 text-white text-center shadow-md sticky top-0 z-10 flex justify-between items-center">
+          <h1 className="text-xl font-bold flex-1">
             {year}年 {month}月 シフト{isAdmin ? "管理" : "提出"}
           </h1>
+          {isAdmin && (
+             <button onClick={() => setIsAdmin(false)} className="text-sm bg-blue-800 px-3 py-1 rounded hover:bg-blue-900">
+               ログアウト
+             </button>
+          )}
         </div>
 
         <div className="p-4">
           {!isAdmin && (
-            <div>
+            // --- 一般スタッフ画面 (変更なし) ---
+            <div className="max-w-md mx-auto">
               <div className="mb-4 bg-blue-50 p-3 rounded-lg border border-blue-100">
                 <label className="block text-xs font-bold mb-1 text-blue-800">スタッフ選択</label>
                 <select 
@@ -192,10 +232,9 @@ export default function Home() {
                 </select>
               </div>
 
-              {/* ▼ シフトが決まっている場合のお知らせ */}
               {Object.keys(determinedSchedule).length > 0 && (
                 <div className="mb-4 p-2 bg-green-100 text-green-800 text-xs font-bold text-center rounded">
-                  🎉 シフトが確定しました！カレンダーを確認してください。
+                  🎉 シフトが確定しました！
                 </div>
               )}
 
@@ -204,36 +243,21 @@ export default function Home() {
                   <div key={i} className={`font-bold py-1 ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-400'}`}>{d}</div>
                 ))}
                 {[...Array(daysInMonth)].map((_, i) => {
-                  const d = i + 1; 
-                  const d_str = str(d);
-                  
-                  // ▼ 確定シフトがあるか探す
-                  let displayText = "";
-                  let isDetermined = false;
-                  
+                  const d = i + 1; const d_str = str(d);
+                  let displayText = ""; let isDetermined = false;
                   if (selectedStaffId && determinedSchedule[d_str]) {
-                     // 自分のIDが含まれているか？
                      const myShift = determinedSchedule[d_str].find(item => item.staffId === selectedStaffId);
-                     if (myShift) {
-                         displayText = `★${myShift.shift}`; // "★A" みたいに表示
-                         isDetermined = true;
-                     }
+                     if (myShift) { displayText = `★${shiftLabel(myShift.shift)}`; isDetermined = true; }
                   }
-
-                  // 確定がないなら、希望を表示
                   const req = requests[d];
                   let bg="bg-white", txt="text-gray-700", bd="border-gray-200";
-
-                  if (isDetermined) {
-                      // 確定時はスペシャルカラー
-                      bg="bg-yellow-100"; txt="text-yellow-700 font-bold"; bd="border-yellow-400";
-                  } else if (req) {
+                  if (isDetermined) { bg="bg-yellow-100"; txt="text-yellow-700 font-bold"; bd="border-yellow-400"; }
+                  else if (req) {
                       if(req.type==="希望休") { bg="bg-red-100"; txt="text-red-600 font-bold"; bd="border-red-200"; }
                       else if(req.type==="有給") { bg="bg-pink-100"; txt="text-pink-600 font-bold"; bd="border-pink-200"; }
                       else { bg="bg-blue-100"; txt="text-blue-700 font-bold"; bd="border-blue-200"; }
                       displayText = req.type.substring(0,2);
                   }
-
                   return (
                     <div key={d} onClick={() => !isDetermined && handleDateClick(d)}
                       className={`aspect-square border rounded flex flex-col justify-center items-center cursor-pointer ${bg} ${bd}`}
@@ -253,84 +277,125 @@ export default function Home() {
           )}
 
           {isAdmin && (
+            // --- 管理者画面 (大幅アップデート: マトリクス表示) ---
             <div>
-              <div className="flex justify-between items-center mb-6 border-b pb-2">
-                <h2 className="font-bold text-lg">管理者設定</h2>
-                <button onClick={() => setIsAdmin(false)} className="text-xs text-blue-600 underline">ログアウト</button>
-              </div>
-
-              {/* ▼▼▼ 完成したシフト一覧 ▼▼▼ */}
-              {Object.keys(determinedSchedule).length > 0 && (
-                 <div className="mb-8 p-4 bg-green-50 border border-green-200 rounded">
-                    <h3 className="font-bold text-sm text-green-800 mb-2">🎉 完成したシフト表 ({month}月)</h3>
-                    <div className="text-xs space-y-2 h-64 overflow-y-auto">
-                        {Object.keys(determinedSchedule).sort((a,b)=>Number(a)-Number(b)).map(day => (
-                            <div key={day} className="border-b pb-1">
-                                <span className="font-bold inline-block w-8">{day}日:</span>
-                                {determinedSchedule[day].length > 0 ? (
-                                    determinedSchedule[day].map((s, idx) => (
-                                        <span key={idx} className="mr-2">
-                                            {s.name}[<span className="font-bold text-green-700">{s.shift}</span>]
-                                        </span>
-                                    ))
-                                ) : (
-                                    <span className="text-gray-400">休み</span>
-                                )}
-                            </div>
+              <div className="mb-8">
+                <div className="flex justify-between items-end mb-2">
+                   <h2 className="font-bold text-lg text-gray-700">📅 シフト全体表</h2>
+                   {Object.keys(determinedSchedule).length > 0 && (
+                     <button 
+                       onClick={downloadCSV}
+                       className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded shadow flex items-center gap-2"
+                     >
+                       📄 Excel用CSVをダウンロード
+                     </button>
+                   )}
+                </div>
+                
+                {/* マトリクス・テーブル表示 */}
+                <div className="overflow-x-auto border rounded-lg shadow-sm">
+                  <table className="min-w-full bg-white text-xs text-center border-collapse">
+                    <thead>
+                      <tr className="bg-gray-100 text-gray-600">
+                        <th className="p-2 border whitespace-nowrap sticky left-0 bg-gray-100 z-10">名前</th>
+                        {[...Array(daysInMonth)].map((_, i) => (
+                          <th key={i} className={`p-1 border min-w-[24px] ${i%7===0?'text-red-500':(i+1)%7===0?'text-blue-500':''}`}>
+                            {i+1}
+                          </th>
                         ))}
-                    </div>
-                 </div>
-              )}
-
-              <div className="mb-8 bg-yellow-50 p-4 rounded border border-yellow-200">
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="font-bold text-sm text-yellow-800">💰 前年売上入力 ({month}月)</h3>
-                  <button onClick={saveSalesConfig} className="bg-yellow-600 text-white px-3 py-1 rounded text-xs font-bold shadow">保存する</button>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {staffs.map((staff) => (
+                        <tr key={staff.id} className="hover:bg-gray-50">
+                          <td className="p-2 border font-bold text-left whitespace-nowrap sticky left-0 bg-white z-10">
+                            {staff.name} <span className="text-[10px] text-gray-400 font-normal">({staff.rank})</span>
+                          </td>
+                          {[...Array(daysInMonth)].map((_, i) => {
+                             const d_str = str(i+1);
+                             const dayData = determinedSchedule[d_str] || [];
+                             const myShift = dayData.find(s => s.staffId === staff.id);
+                             // 表示文字の決定
+                             let cellText = "";
+                             let cellClass = "";
+                             if (myShift) {
+                               cellText = shiftLabel(myShift.shift);
+                               if(cellText==="早") cellClass="text-blue-600 font-bold bg-blue-50";
+                               if(cellText==="中") cellClass="text-green-600 font-bold bg-green-50";
+                               if(cellText==="遅") cellClass="text-orange-600 font-bold bg-orange-50";
+                             }
+                             return (
+                               <td key={i} className={`border h-8 ${cellClass}`}>
+                                 {cellText}
+                               </td>
+                             );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                <div className="grid grid-cols-7 gap-1 text-center text-xs">
-                   {['日','月','火','水','木','金','土'].map((d,i) => (
-                      <div key={i} className={`font-bold ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-400'}`}>{d}</div>
-                   ))}
-                   {[...Array(daysInMonth)].map((_, i) => {
-                      const d = i + 1;
-                      return (
-                        <div key={d} className="bg-white border rounded p-1 flex flex-col items-center">
-                          <span className="text-gray-400 mb-1">{d}</span>
-                          <input 
-                            type="number" className="w-full text-center border-b border-yellow-200 focus:outline-none bg-transparent" placeholder="0"
-                            value={dailySales[d] || ""} onChange={(e) => handleSalesChange(d, e.target.value)}
-                          />
-                        </div>
-                      );
-                   })}
-                </div>
+                {Object.keys(determinedSchedule).length === 0 && (
+                  <p className="text-center text-gray-400 mt-4 py-8 bg-gray-50 rounded">まだシフトが計算されていません</p>
+                )}
               </div>
 
-              <div className="mb-6 p-4 rounded bg-gray-50 border">
-                <h3 className="font-bold text-sm mb-2">👤 スタッフ追加</h3>
-                <div className="flex flex-wrap gap-2">
-                  <input type="text" placeholder="名前" className="border p-2 rounded flex-1 min-w-[120px]" value={newStaffName} onChange={e=>setNewStaffName(e.target.value)} />
-                  <select className="border p-2 rounded" value={newStaffRank} onChange={e=>setNewStaffRank(e.target.value)}>
-                    <option>店長</option><option>リーダー</option><option>社員</option><option>パートナー</option><option>新規パートナー</option>
-                  </select>
-                  <button onClick={handleAddStaff} className="bg-green-600 text-white p-2 rounded font-bold text-sm">追加</button>
-                </div>
-              </div>
-
-              <h3 className="font-bold text-sm mb-2">登録スタッフ一覧</h3>
-              <div className="space-y-2 pb-10">
-                {staffs.map((s) => (
-                  <div key={s.id} className="bg-white p-3 border rounded shadow-sm flex items-center justify-between">
-                    <div>
-                      <div className="font-bold">{s.name} <span className="text-xs font-normal bg-gray-100 px-1 rounded">{s.rank}</span></div>
-                      <div className="flex gap-2 mt-1">
-                        <button onClick={() => toggleCanClose(s)} className={`text-xs px-2 py-0.5 rounded border ${s.canClose ? 'bg-indigo-100 text-indigo-700 border-indigo-300' : 'bg-gray-100 text-gray-400'}`}>締め: {s.canClose?'OK':'NG'}</button>
-                        <button onClick={() => openSkillModal(s)} className="text-xs bg-gray-100 px-2 py-0.5 rounded border hover:bg-gray-200">スキル設定</button>
-                      </div>
-                    </div>
-                    <button onClick={async()=>{if(confirm("削除しますか？")) { await deleteDoc(doc(db,"staffs",s.id)); fetchStaffs(); }}} className="text-red-400 text-xs px-2">削除</button>
+              {/* 設定エリア（2カラムレイアウト） */}
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="bg-yellow-50 p-4 rounded border border-yellow-200">
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="font-bold text-sm text-yellow-800">💰 前年売上入力 ({month}月)</h3>
+                    <button onClick={saveSalesConfig} className="bg-yellow-600 text-white px-3 py-1 rounded text-xs font-bold shadow">保存</button>
                   </div>
-                ))}
+                  <div className="grid grid-cols-7 gap-1 text-center text-xs">
+                     {['日','月','火','水','木','金','土'].map((d,i) => (
+                        <div key={i} className={`font-bold ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-400'}`}>{d}</div>
+                     ))}
+                     {[...Array(daysInMonth)].map((_, i) => {
+                        const d = i + 1;
+                        return (
+                          <div key={d} className="bg-white border rounded p-1 flex flex-col items-center">
+                            <span className="text-gray-400 mb-1">{d}</span>
+                            <input 
+                              type="number" className="w-full text-center border-b border-yellow-200 focus:outline-none bg-transparent" placeholder="0"
+                              value={dailySales[d] || ""} onChange={(e) => handleSalesChange(d, e.target.value)}
+                            />
+                          </div>
+                        );
+                     })}
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="p-4 rounded bg-gray-50 border">
+                    <h3 className="font-bold text-sm mb-2">👤 スタッフ追加</h3>
+                    <div className="flex flex-wrap gap-2">
+                      <input type="text" placeholder="名前" className="border p-2 rounded flex-1 min-w-[120px]" value={newStaffName} onChange={e=>setNewStaffName(e.target.value)} />
+                      <select className="border p-2 rounded" value={newStaffRank} onChange={e=>setNewStaffRank(e.target.value)}>
+                        <option>店長</option><option>リーダー</option><option>社員</option><option>パートナー</option><option>新規パートナー</option>
+                      </select>
+                      <button onClick={handleAddStaff} className="bg-green-600 text-white p-2 rounded font-bold text-sm">追加</button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="font-bold text-sm mb-2">登録スタッフ一覧</h3>
+                    <div className="space-y-2 h-64 overflow-y-auto border p-2 rounded bg-white">
+                      {staffs.map((s) => (
+                        <div key={s.id} className="bg-white p-2 border-b flex items-center justify-between text-sm">
+                          <div>
+                            <div className="font-bold">{s.name} <span className="text-xs font-normal text-gray-500">({s.rank})</span></div>
+                            <div className="flex gap-2 mt-1">
+                              <button onClick={() => toggleCanClose(s)} className={`text-[10px] px-2 py-0.5 rounded border ${s.canClose ? 'bg-indigo-100 text-indigo-700 border-indigo-300' : 'bg-gray-100 text-gray-400'}`}>締め: {s.canClose?'OK':'NG'}</button>
+                              <button onClick={() => openSkillModal(s)} className="text-[10px] bg-gray-100 px-2 py-0.5 rounded border hover:bg-gray-200">スキル設定</button>
+                            </div>
+                          </div>
+                          <button onClick={async()=>{if(confirm("削除しますか？")) { await deleteDoc(doc(db,"staffs",s.id)); fetchStaffs(); }}} className="text-red-400 text-xs px-2">削除</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -348,6 +413,7 @@ export default function Home() {
           )}
         </div>
 
+        {/* --- モーダル類（変更なし） --- */}
         {modalOpen && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
@@ -413,5 +479,4 @@ export default function Home() {
   );
 }
 
-// 簡易ヘルパー関数: 数値を文字列に
 function str(n) { return String(n); }
