@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { db } from "../lib/firebase";
-import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc, query, orderBy, setDoc } from "firebase/firestore";
+import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc, query, orderBy, setDoc, getDoc } from "firebase/firestore";
 
 export default function Home() {
   const [isAdmin, setIsAdmin] = useState(false);
@@ -14,13 +14,14 @@ export default function Home() {
   const [staffs, setStaffs] = useState([]);
   const [selectedStaffId, setSelectedStaffId] = useState("");
   const [requests, setRequests] = useState({});
-  const [monthlyConfig, setMonthlyConfig] = useState({ targetSales: 0 }); // 売上設定用
+  // 売上設定（日別） { "1": 100, "2": 80 ... }
+  const [dailySales, setDailySales] = useState({}); 
 
   // ▼ UI用
   const [selectedDay, setSelectedDay] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [skillModalOpen, setSkillModalOpen] = useState(false); // スキル設定画面用
-  const [editingStaff, setEditingStaff] = useState(null); // スキル編集中のスタッフ
+  const [skillModalOpen, setSkillModalOpen] = useState(false);
+  const [editingStaff, setEditingStaff] = useState(null);
   
   // ▼ 管理者入力用
   const [newStaffName, setNewStaffName] = useState("");
@@ -28,12 +29,15 @@ export default function Home() {
 
   // 初期化
   useEffect(() => {
+    // 日付ロジック：基本は来月。20日を過ぎたら再来月。
     const targetDate = new Date();
-    targetDate.setMonth(targetDate.getMonth() + 1);
+    targetDate.setMonth(targetDate.getMonth() + 1); // まず来月にする
+    
     const today = new Date();
     if (today.getDate() >= 20) {
-      targetDate.setMonth(targetDate.getMonth() + 1);
+      targetDate.setMonth(targetDate.getMonth() + 1); // 20日過ぎならもう1ヶ月進める
     }
+
     const y = targetDate.getFullYear();
     const m = targetDate.getMonth() + 1;
     setYear(y);
@@ -44,7 +48,6 @@ export default function Home() {
     fetchConfig(y, m);
   }, []);
 
-  // スタッフ一覧取得
   const fetchStaffs = async () => {
     try {
       const q = query(collection(db, "staffs"), orderBy("rankId", "asc")); 
@@ -55,25 +58,42 @@ export default function Home() {
     } catch (e) { console.log("Error fetching staffs"); }
   };
 
-  // 売上設定の取得
+  // 月ごとの設定（日別売上）を取得
   const fetchConfig = async (y, m) => {
     try {
-      const docId = `${y}-${m}`; // "2026-2" のようなID
-      const snap = await getDocs(collection(db, "monthlyConfig"));
-      // 簡易的に全検索してマッチするものを探す（本来はgetDocでID指定が良い）
-      const found = snap.docs.find(d => d.id === docId);
-      if (found) setMonthlyConfig(found.data());
-      else setMonthlyConfig({ targetSales: 0 });
+      const docId = `${y}-${m}`; 
+      const docRef = doc(db, "monthlyConfig", docId);
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setDailySales(data.dailySales || {});
+      } else {
+        // データがない（月が変わった）場合は空っぽでスタート
+        setDailySales({});
+      }
     } catch (e) { console.log("Config fetch error"); }
   };
 
-  // ▼ 売上を保存する
-  const saveConfig = async () => {
+  // ▼ 売上設定を保存
+  const saveSalesConfig = async () => {
     const docId = `${year}-${month}`;
     try {
-      await setDoc(doc(db, "monthlyConfig", docId), monthlyConfig);
-      alert(`売上設定を保存しました: ${monthlyConfig.targetSales}万円`);
+      // dailyConfigとして保存
+      await setDoc(doc(db, "monthlyConfig", docId), { 
+        dailySales: dailySales,
+        updatedAt: new Date()
+      }, { merge: true });
+      alert("売上設定を保存しました");
     } catch (e) { alert("保存失敗"); }
+  };
+
+  // ▼ 売上入力欄の変更ハンドラ
+  const handleSalesChange = (day, value) => {
+    setDailySales(prev => ({
+      ...prev,
+      [day]: value // 文字列のまま保持、計算時にNumberにする
+    }));
   };
 
   // ▼ スタッフ追加
@@ -85,40 +105,48 @@ export default function Home() {
         name: newStaffName, 
         rank: newStaffRank, 
         rankId: rankMap[newStaffRank] || 99,
-        canClose: false, // 締め作業フラグ（初期値NG）
-        skills: { fridge: 1, washing: 1, ac: 1, tv: 1, mobile: 1, pc: 1 } // スキル初期値
+        canClose: false,
+        skills: { fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 } // 初期値0
       });
       setNewStaffName(""); 
       fetchStaffs();
     } catch (error) { alert("登録失敗"); }
   };
 
-  // ▼ 締め作業OK/NGの切り替え
+  // ▼ 締め作業OK/NG
   const toggleCanClose = async (staff) => {
     const newVal = !staff.canClose;
-    // 画面上の表示を即時更新
     setStaffs(prev => prev.map(s => s.id === staff.id ? { ...s, canClose: newVal } : s));
-    // DB更新
     await updateDoc(doc(db, "staffs", staff.id), { canClose: newVal });
   };
 
-  // ▼ スキル編集画面を開く
   const openSkillModal = (staff) => {
-    setEditingStaff({ ...staff }); // コピーをセット
+    setEditingStaff({ ...staff });
     setSkillModalOpen(true);
   };
 
-  // ▼ スキルを保存する
+  // ▼ スキル保存
   const saveSkills = async () => {
     if (!editingStaff) return;
     try {
       await updateDoc(doc(db, "staffs", editingStaff.id), { skills: editingStaff.skills });
       setSkillModalOpen(false);
-      fetchStaffs(); // 最新情報を再取得
+      fetchStaffs();
     } catch (e) { alert("スキル保存失敗"); }
   };
 
-  // ▼ シフト提出
+  // ▼ スキル値のトグル処理（同じ値なら0にする）
+  const handleSkillClick = (key, num) => {
+    setEditingStaff(prev => {
+      const currentVal = prev.skills?.[key] || 0;
+      const newVal = (currentVal === num) ? 0 : num; // 同じなら0、違えばその数字
+      return {
+        ...prev,
+        skills: { ...prev.skills, [key]: newVal }
+      };
+    });
+  };
+
   const handleDateClick = (day) => {
     if (!selectedStaffId) { alert("先に名前を選択してください"); return; }
     setSelectedDay(day); setModalOpen(true);
@@ -213,26 +241,41 @@ export default function Home() {
           )}
 
           {isAdmin && (
-            // ▼▼▼ 管理者用画面（大幅機能追加） ▼▼▼
+            // ▼▼▼ 管理者用画面 ▼▼▼
             <div>
               <div className="flex justify-between items-center mb-6 border-b pb-2">
                 <h2 className="font-bold text-lg">管理者設定</h2>
                 <button onClick={() => setIsAdmin(false)} className="text-xs text-blue-600 underline">ログアウト</button>
               </div>
 
-              {/* 1. 売上設定 */}
-              <div className="mb-6 bg-yellow-50 p-4 rounded border border-yellow-200">
-                <h3 className="font-bold text-sm mb-2 text-yellow-800">💰 {month}月の前年売上設定</h3>
-                <div className="flex gap-2">
-                  <input 
-                    type="number" className="border p-2 rounded w-24 text-right" placeholder="0"
-                    value={monthlyConfig.targetSales}
-                    onChange={(e) => setMonthlyConfig({...monthlyConfig, targetSales: Number(e.target.value)})}
-                  />
-                  <span className="self-center text-sm">万円</span>
-                  <button onClick={saveConfig} className="bg-yellow-600 text-white px-3 rounded text-sm font-bold ml-auto">保存</button>
+              {/* 1. 日別売上設定 (カレンダー形式) */}
+              <div className="mb-8 bg-yellow-50 p-4 rounded border border-yellow-200">
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="font-bold text-sm text-yellow-800">💰 前年売上入力 ({month}月)</h3>
+                  <button onClick={saveSalesConfig} className="bg-yellow-600 text-white px-3 py-1 rounded text-xs font-bold shadow">保存する</button>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">※この金額で総労働時間の上限が変わります</p>
+                <p className="text-[10px] text-gray-500 mb-2">※日別の売上(万円)を入力してください</p>
+                
+                <div className="grid grid-cols-7 gap-1 text-center text-xs">
+                   {['日','月','火','水','木','金','土'].map((d,i) => (
+                      <div key={i} className={`font-bold ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-400'}`}>{d}</div>
+                   ))}
+                   {[...Array(daysInMonth)].map((_, i) => {
+                      const d = i + 1;
+                      return (
+                        <div key={d} className="bg-white border rounded p-1 flex flex-col items-center">
+                          <span className="text-gray-400 mb-1">{d}</span>
+                          <input 
+                            type="number" 
+                            className="w-full text-center border-b border-yellow-200 focus:border-yellow-500 focus:outline-none text-gray-700 font-bold bg-transparent"
+                            placeholder="0"
+                            value={dailySales[d] || ""}
+                            onChange={(e) => handleSalesChange(d, e.target.value)}
+                          />
+                        </div>
+                      );
+                   })}
+                </div>
               </div>
 
               {/* 2. スタッフ登録 */}
@@ -247,7 +290,7 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* 3. スタッフリスト（スキル設定付き） */}
+              {/* 3. スタッフリスト */}
               <h3 className="font-bold text-sm mb-2">登録スタッフ一覧</h3>
               <div className="space-y-2 pb-10">
                 {staffs.map((s) => (
@@ -255,14 +298,12 @@ export default function Home() {
                     <div>
                       <div className="font-bold">{s.name} <span className="text-xs font-normal bg-gray-100 px-1 rounded">{s.rank}</span></div>
                       <div className="flex gap-2 mt-1">
-                        {/* 締めスイッチ */}
                         <button 
                           onClick={() => toggleCanClose(s)}
                           className={`text-xs px-2 py-0.5 rounded border ${s.canClose ? 'bg-indigo-100 text-indigo-700 border-indigo-300' : 'bg-gray-100 text-gray-400'}`}
                         >
                           締め: {s.canClose ? 'OK' : 'NG'}
                         </button>
-                        {/* スキル編集ボタン */}
                         <button onClick={() => openSkillModal(s)} className="text-xs bg-gray-100 px-2 py-0.5 rounded border hover:bg-gray-200">
                           スキル設定
                         </button>
@@ -275,7 +316,6 @@ export default function Home() {
             </div>
           )}
           
-          {/* 管理者ログイン入り口 */}
           {!isAdmin && (
              <div className="mt-12 text-right">
                 <details className="text-xs text-gray-300">
@@ -322,15 +362,15 @@ export default function Home() {
           </div>
         )}
 
-        {/* ▼▼▼ スキル設定モーダル（新機能） ▼▼▼ */}
+        {/* ▼▼▼ スキル設定モーダル（トグル対応） ▼▼▼ */}
         {skillModalOpen && editingStaff && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setSkillModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
               <h3 className="text-lg font-bold mb-4 text-center border-b pb-2">{editingStaff.name}さんのスキル</h3>
               <div className="space-y-3">
-                {/* 各スキルを5段階で設定 */}
                 {['fridge:冷蔵庫', 'washing:洗濯機', 'ac:エアコン', 'tv:TV', 'mobile:携帯', 'pc:PC'].map((item) => {
                   const [key, label] = item.split(':');
+                  const currentVal = editingStaff.skills?.[key] || 0;
                   return (
                     <div key={key} className="flex justify-between items-center">
                       <span className="text-sm font-bold">{label}</span>
@@ -338,8 +378,8 @@ export default function Home() {
                         {[1, 2, 3, 4, 5].map(num => (
                           <button
                             key={num}
-                            onClick={() => setEditingStaff({...editingStaff, skills: {...editingStaff.skills, [key]: num}})}
-                            className={`w-8 h-8 rounded border text-sm ${editingStaff.skills?.[key] === num ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}
+                            onClick={() => handleSkillClick(key, num)}
+                            className={`w-8 h-8 rounded border text-sm transition-colors ${currentVal === num ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}
                           >
                             {num}
                           </button>
