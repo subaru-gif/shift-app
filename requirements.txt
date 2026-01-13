@@ -1,0 +1,3 @@
+firebase-admin
+pulp
+pandas
