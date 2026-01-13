@@ -17,3 +17,4 @@ const db = getFirestore(app);
 
 // ▼▼▼ これが一番大事な行です！ ▼▼▼
 export { db };
+// update
