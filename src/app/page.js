@@ -9,33 +9,45 @@ export default function Home() {
   const [year, setYear] = useState(0);
   const [month, setMonth] = useState(0);
   const [daysInMonth, setDaysInMonth] = useState(30);
-  
+  const [activeTab, setActiveTab] = useState("input"); // input | shift
+
+  // ▼ データ
   const [staffs, setStaffs] = useState([]);
   const [selectedStaffId, setSelectedStaffId] = useState("");
   const [requests, setRequests] = useState({});
   const [dailySales, setDailySales] = useState({});
   const [determinedSchedule, setDeterminedSchedule] = useState({});
+  const [meetingSchedule, setMeetingSchedule] = useState({}); // { "1": ["staffId1", "staffId2"] }
 
+  // ▼ 設定（キャップ・スキル）
+  const [configCaps, setConfigCaps] = useState({
+    salesLow: 100, hoursLow: 70,
+    salesHigh: 500, hoursHigh: 100
+  });
+  const [minSkills, setMinSkills] = useState({
+    fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0
+  });
+
+  // ▼ UI用
   const [selectedDay, setSelectedDay] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [skillModalOpen, setSkillModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState(null);
   
+  // ▼ 新規登録用
   const [newStaffName, setNewStaffName] = useState("");
   const [newStaffRank, setNewStaffRank] = useState("パートナー");
   const [newStaffDept, setNewStaffDept] = useState("家電");
+  const [newStaffMaxDays, setNewStaffMaxDays] = useState(22);
 
   useEffect(() => {
     const targetDate = new Date();
     targetDate.setMonth(targetDate.getMonth() + 1);
-    const today = new Date();
-    if (today.getDate() >= 20) {
-      targetDate.setMonth(targetDate.getMonth() + 1);
-    }
+    if (new Date().getDate() >= 20) targetDate.setMonth(targetDate.getMonth() + 1);
+    
     const y = targetDate.getFullYear();
     const m = targetDate.getMonth() + 1;
-    setYear(y);
-    setMonth(m);
+    setYear(y); setMonth(m);
     setDaysInMonth(new Date(y, m, 0).getDate());
 
     fetchStaffs();
@@ -44,80 +56,79 @@ export default function Home() {
   }, []);
 
   const fetchStaffs = async () => {
-    try {
-      const q = query(collection(db, "staffs"), orderBy("rankId", "asc")); 
-      const querySnapshot = await getDocs(q);
-      const list = [];
-      querySnapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-      setStaffs(list);
-    } catch (e) { console.log("Error fetching staffs"); }
+    const q = query(collection(db, "staffs"), orderBy("rankId", "asc")); 
+    const snap = await getDocs(q);
+    const list = [];
+    snap.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+    setStaffs(list);
   };
 
   const fetchConfig = async (y, m) => {
-    try {
-      const docId = `${y}-${m}`; 
-      const docSnap = await getDoc(doc(db, "monthlyConfig", docId));
-      if (docSnap.exists()) setDailySales(docSnap.data().dailySales || {});
-      else setDailySales({});
-    } catch (e) { console.log("Config fetch error"); }
+    const docId = `${y}-${m}`; 
+    const snap = await getDoc(doc(db, "monthlyConfig", docId));
+    if (snap.exists()) {
+      const data = snap.data();
+      setDailySales(data.dailySales || {});
+      setConfigCaps(data.caps || { salesLow: 100, hoursLow: 70, salesHigh: 500, hoursHigh: 100 });
+      setMinSkills(data.minSkills || { fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 });
+      setMeetingSchedule(data.meetings || {});
+    }
   };
 
   const fetchDeterminedShift = async (y, m) => {
-    try {
-      const docId = `${y}-${m}`;
-      const docSnap = await getDoc(doc(db, "determined_shifts", docId));
-      if (docSnap.exists()) {
-        setDeterminedSchedule(docSnap.data().schedule || {});
-      } else {
-        setDeterminedSchedule({});
-      }
-    } catch (e) { console.log("Determined shift fetch error"); }
+    const docId = `${y}-${m}`;
+    const snap = await getDoc(doc(db, "determined_shifts", docId));
+    if (snap.exists()) setDeterminedSchedule(snap.data().schedule || {});
   };
 
-  const saveSalesConfig = async () => {
+  const saveConfig = async () => {
     const docId = `${year}-${month}`;
     try {
-      await setDoc(doc(db, "monthlyConfig", docId), { dailySales, updatedAt: new Date() }, { merge: true });
-      alert("売上設定を保存しました");
+      await setDoc(doc(db, "monthlyConfig", docId), { 
+        dailySales, 
+        caps: configCaps,
+        minSkills,
+        meetings: meetingSchedule,
+        updatedAt: new Date() 
+      }, { merge: true });
+      alert("設定を保存しました");
     } catch (e) { alert("保存失敗"); }
   };
 
-  const handleSalesChange = (day, value) => {
-    setDailySales(prev => ({ ...prev, [day]: value }));
-  };
-
+  const handleSalesChange = (day, value) => setDailySales(prev => ({ ...prev, [day]: value }));
+  
+  // スタッフ操作
   const handleAddStaff = async () => {
     if (!newStaffName) return;
     const rankMap = { "店長": 1, "リーダー": 2, "社員": 3, "パートナー": 4, "新規パートナー": 5 };
-    try {
-      await addDoc(collection(db, "staffs"), { 
-        name: newStaffName, rank: newStaffRank, rankId: rankMap[newStaffRank] || 99,
-        department: newStaffDept, canClose: false, 
-        skills: { fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 }
-      });
-      setNewStaffName(""); fetchStaffs();
-    } catch (error) { alert("登録失敗"); }
+    await addDoc(collection(db, "staffs"), { 
+      name: newStaffName, rank: newStaffRank, rankId: rankMap[newStaffRank] || 99,
+      department: newStaffDept, maxDays: Number(newStaffMaxDays),
+      canOpen: false, canClose: false,
+      skills: { fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 }
+    });
+    setNewStaffName(""); fetchStaffs();
   };
 
-  const toggleCanClose = async (staff) => {
-    const newVal = !staff.canClose;
-    setStaffs(prev => prev.map(s => s.id === staff.id ? { ...s, canClose: newVal } : s));
-    await updateDoc(doc(db, "staffs", staff.id), { canClose: newVal });
+  const toggleKeyStatus = async (staff, type) => {
+    const newVal = !staff[type];
+    setStaffs(prev => prev.map(s => s.id === staff.id ? { ...s, [type]: newVal } : s));
+    await updateDoc(doc(db, "staffs", staff.id), { [type]: newVal });
+  };
+  
+  const updateMaxDays = async (staff, val) => {
+    const num = Number(val);
+    setStaffs(prev => prev.map(s => s.id === staff.id ? { ...s, maxDays: num } : s));
+    await updateDoc(doc(db, "staffs", staff.id), { maxDays: num });
   };
 
-  const openSkillModal = (staff) => {
-    setEditingStaff({ ...staff });
-    setSkillModalOpen(true);
-  };
-
+  // スキル操作
+  const openSkillModal = (staff) => { setEditingStaff({ ...staff }); setSkillModalOpen(true); };
   const saveSkills = async () => {
     if (!editingStaff) return;
-    try {
-      await updateDoc(doc(db, "staffs", editingStaff.id), { skills: editingStaff.skills });
-      setSkillModalOpen(false); fetchStaffs();
-    } catch (e) { alert("スキル保存失敗"); }
+    await updateDoc(doc(db, "staffs", editingStaff.id), { skills: editingStaff.skills });
+    setSkillModalOpen(false); fetchStaffs();
   };
-
   const handleSkillClick = (key, num) => {
     setEditingStaff(prev => {
       const currentVal = prev.skills?.[key] || 0;
@@ -125,64 +136,70 @@ export default function Home() {
     });
   };
 
+  // シフト希望
   const handleDateClick = (day) => {
     if (!selectedStaffId) { alert("先に名前を選択してください"); return; }
     setSelectedDay(day); setModalOpen(true);
   };
-
   const saveRequest = (type, start = "", end = "") => {
     setRequests(prev => ({ ...prev, [selectedDay]: { type, start, end } }));
     setModalOpen(false);
   };
-
   const removeRequest = () => {
     setRequests(prev => { const d = { ...prev }; delete d[selectedDay]; return d; });
     setModalOpen(false);
   };
-
   const handleSubmit = async () => {
-    if (!selectedStaffId || Object.keys(requests).length === 0) { alert("入力がありません"); return; }
+    if (!selectedStaffId) return;
     const staff = staffs.find(s => s.id === selectedStaffId);
-    if(!confirm(`${staff.name}さんのシフトを提出しますか？`)) return;
-    try {
-      await addDoc(collection(db, "shifts"), {
-        staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests, createdAt: new Date()
-      });
-      alert("✅ 提出完了！"); setRequests({}); setSelectedStaffId("");
-    } catch (e) { alert("エラー"); }
+    if(!confirm(`提出しますか？`)) return;
+    await addDoc(collection(db, "shifts"), {
+      staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests, createdAt: new Date()
+    });
+    alert("✅ 提出完了！"); setRequests({}); setSelectedStaffId("");
   };
 
-  const handleLogin = () => {
-    if (password === "333191") setIsAdmin(true); else alert("パスワードが違います");
+  // 会議登録
+  const toggleMeeting = (day, staffId) => {
+    setMeetingSchedule(prev => {
+      const dayList = prev[day] || [];
+      const newList = dayList.includes(staffId) ? dayList.filter(id => id !== staffId) : [...dayList, staffId];
+      return { ...prev, [day]: newList };
+    });
   };
 
-  // ▼▼▼ API呼び出し機能 ▼▼▼
+  // API呼び出し
   const handleCreateShift = async () => {
-    if(!confirm("クラウドAIでシフトを作成しますか？\n（数十秒かかる場合があります）")) return;
+    if(!confirm("クラウドAIでシフトを作成しますか？")) return;
     try {
-      alert("🤖 AIが計算を開始しました...\n完了すると自動的に画面が更新されます。");
-      const res = await fetch('/api', { method: 'POST' }); // API呼び出し
+      alert("🤖 計算中...");
+      await saveConfig(); // 最新設定を保存してから
+      const res = await fetch('/api', { method: 'POST' }); 
       if (res.ok) {
         const data = await res.json();
         alert("✨ " + data.message);
         window.location.reload();
       } else {
         const err = await res.json();
-        alert("❌ 作成失敗: " + (err.error || "不明なエラー"));
+        alert("❌ 作成失敗: " + (err.error || "エラー"));
       }
-    } catch (e) {
-      alert("❌ 通信エラー: " + e.message);
-    }
+    } catch (e) { alert("❌ 通信エラー"); }
   };
 
-  const currentStaff = staffs.find(s => s.id === selectedStaffId);
-  const isEmployee = currentStaff && ["店長", "リーダー", "社員"].includes(currentStaff.rank);
-
-  const shiftLabel = (code) => {
-    if(code === "A") return "早";
-    if(code === "B") return "中";
-    if(code === "C") return "遅";
-    return code || "";
+  // 表示用ヘルパー
+  const getShiftDisplay = (shiftCode, start, end) => {
+    if (shiftCode === "A") return "早";
+    if (shiftCode === "B") return "中";
+    if (shiftCode === "C") return "遅";
+    if (shiftCode === "会議") return "議";
+    if (shiftCode === "有給") return "有";
+    if (shiftCode === "時間指定" && start && end) {
+      // 11:00 -> 11, 20:00 -> 20 => 1120
+      const s = start.split(":")[0];
+      const e = end.split(":")[0];
+      return `${s}${e}`;
+    }
+    return shiftCode || "";
   };
 
   const getSortedStaffs = () => {
@@ -198,163 +215,257 @@ export default function Home() {
   };
 
   const downloadCSV = () => {
-    let csvContent = "\uFEFF"; 
-    const header = ["名前", "部門", "役職", ...[...Array(daysInMonth)].map((_,i)=>`${i+1}日`)];
-    csvContent += header.join(",") + "\n";
-    const sortedList = getSortedStaffs();
-    sortedList.forEach(staff => {
-      const row = [staff.name, staff.department || "-", staff.rank];
+    let csv = "\uFEFF名前,部門,役職," + [...Array(daysInMonth)].map((_,i)=>`${i+1}日`).join(",") + "\n";
+    getSortedStaffs().forEach(s => {
+      const row = [s.name, s.department, s.rank];
       for(let d=1; d<=daysInMonth; d++) {
-        const d_str = str(d);
-        const dayData = determinedSchedule[d_str] || [];
-        const myShift = dayData.find(s => s.staffId === staff.id);
-        row.push(myShift ? shiftLabel(myShift.shift) : "");
+        const dayData = determinedSchedule[String(d)] || [];
+        const shift = dayData.find(x => x.staffId === s.id);
+        row.push(shift ? getShiftDisplay(shift.shift, shift.start, shift.end) : "");
       }
-      csvContent += row.join(",") + "\n";
+      csv += row.join(",") + "\n";
     });
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", `${year}年${month}月シフト表.csv`);
+    link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    link.download = "shift.csv";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
+  const currentStaff = staffs.find(s => s.id === selectedStaffId);
+  const isEmployee = currentStaff && ["店長", "リーダー", "社員"].includes(currentStaff.rank);
+
   return (
-    <div className="min-h-screen bg-gray-50 p-4 font-sans text-gray-800 pb-20">
-      <div className="max-w-6xl mx-auto bg-white shadow-lg rounded-xl overflow-hidden min-h-[600px] relative">
-        <div className="bg-blue-600 p-4 text-white text-center shadow-md sticky top-0 z-10 flex justify-between items-center">
-          <h1 className="text-xl font-bold flex-1">{year}年 {month}月 シフト{isAdmin ? "管理" : "提出"}</h1>
-          {isAdmin && (<button onClick={() => setIsAdmin(false)} className="text-sm bg-blue-800 px-3 py-1 rounded hover:bg-blue-900">ログアウト</button>)}
+    <div className="min-h-screen bg-gray-50 p-2 font-sans text-gray-800 pb-20">
+      <div className="max-w-7xl mx-auto bg-white shadow-xl rounded-xl overflow-hidden">
+        
+        {/* ヘッダー */}
+        <div className="bg-blue-700 p-4 text-white flex justify-between items-center sticky top-0 z-20 shadow">
+          <h1 className="text-xl font-bold">{year}年{month}月 シフト{isAdmin ? "管理" : "提出"}</h1>
+          {isAdmin && (
+            <div className="flex gap-2">
+              <button onClick={()=>setActiveTab("input")} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==="input"?'bg-white text-blue-700':'bg-blue-800 text-white'}`}>設定・入力</button>
+              <button onClick={()=>setActiveTab("shift")} className={`px-3 py-1 rounded text-xs font-bold ${activeTab==="shift"?'bg-white text-blue-700':'bg-blue-800 text-white'}`}>シフト表・分析</button>
+              <button onClick={() => setIsAdmin(false)} className="px-3 py-1 rounded text-xs bg-red-500 hover:bg-red-600">ログアウト</button>
+            </div>
+          )}
         </div>
 
         <div className="p-4">
+          {/* ▼▼▼ 一般スタッフ画面（提出用） ▼▼▼ */}
           {!isAdmin && (
             <div className="max-w-md mx-auto">
-              <div className="mb-4 bg-blue-50 p-3 rounded-lg border border-blue-100">
+              <div className="mb-4 bg-blue-50 p-3 rounded border border-blue-100">
                 <label className="block text-xs font-bold mb-1 text-blue-800">スタッフ選択</label>
-                <select className="w-full p-2 border border-blue-200 rounded bg-white text-lg" value={selectedStaffId} onChange={(e) => { setSelectedStaffId(e.target.value); setRequests({}); }}>
+                <select className="w-full p-2 border rounded bg-white" value={selectedStaffId} onChange={(e) => { setSelectedStaffId(e.target.value); setRequests({}); }}>
                   <option value="">▼ 選択してください</option>
-                  {staffs.map((s) => (<option key={s.id} value={s.id}>{s.name} ({s.rank})</option>))}
+                  {staffs.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
                 </select>
               </div>
               <div className="grid grid-cols-7 gap-1 mb-6 text-center text-sm select-none">
                 {['日','月','火','水','木','金','土'].map((d,i) => (<div key={i} className={`font-bold py-1 ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-400'}`}>{d}</div>))}
                 {[...Array(daysInMonth)].map((_, i) => {
                   const d = i + 1; const req = requests[d];
-                  let bg="bg-white", txt="text-gray-700", bd="border-gray-200", displayText = "";
+                  let bg="bg-white", txt="text-gray-700", bd="border-gray-200", disp="";
                   if (req) {
                       if(req.type==="希望休") { bg="bg-red-100"; txt="text-red-600 font-bold"; bd="border-red-200"; }
                       else if(req.type==="有給") { bg="bg-pink-100"; txt="text-pink-600 font-bold"; bd="border-pink-200"; }
                       else { bg="bg-blue-100"; txt="text-blue-700 font-bold"; bd="border-blue-200"; }
-                      displayText = req.type.substring(0,2);
+                      disp = getShiftDisplay(req.type, req.start, req.end);
                   }
                   return (
                     <div key={d} onClick={() => handleDateClick(d)} className={`aspect-square border rounded flex flex-col justify-center items-center cursor-pointer ${bg} ${bd}`}>
                       <span className="text-sm">{d}</span>
-                      {displayText && <span className="text-[10px]">{displayText}</span>}
+                      {disp && <span className="text-[10px]">{disp}</span>}
                     </div>
                   );
                 })}
               </div>
               <div className="fixed bottom-0 left-0 w-full p-4 bg-white border-t z-20">
-                <div className="max-w-md mx-auto"><button onClick={handleSubmit} disabled={!selectedStaffId} className={`w-full py-3 rounded-lg font-bold text-white shadow-lg ${selectedStaffId?'bg-blue-600':'bg-gray-300'}`}>提出する</button></div>
+                <button onClick={handleSubmit} disabled={!selectedStaffId} className={`w-full py-3 rounded-lg font-bold text-white shadow-lg ${selectedStaffId?'bg-blue-600':'bg-gray-300'}`}>提出する</button>
               </div>
             </div>
           )}
 
-          {isAdmin && (
-            <div>
-              <div className="mb-8">
-                <div className="flex justify-between items-end mb-2">
-                   <h2 className="font-bold text-lg text-gray-700">📅 シフト全体表</h2>
-                   <div className="flex gap-2">
-                     <button onClick={handleCreateShift} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded shadow text-sm">⚡ クラウドでシフト作成</button>
-                     {Object.keys(determinedSchedule).length > 0 && (
-                       <button onClick={downloadCSV} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded shadow flex items-center gap-2 text-sm">📄 CSV出力</button>
-                     )}
-                   </div>
+          {/* ▼▼▼ 管理者画面：タブ1「設定・入力」 ▼▼▼ */}
+          {isAdmin && activeTab === "input" && (
+            <div className="grid lg:grid-cols-2 gap-8">
+              {/* 左カラム：基本設定 */}
+              <div className="space-y-6">
+                <div className="bg-yellow-50 p-4 rounded border border-yellow-200 shadow-sm">
+                  <div className="flex justify-between items-center mb-3">
+                    <h3 className="font-bold text-sm text-yellow-800">💰 売上・労働時間キャップ設定</h3>
+                    <button onClick={saveConfig} className="bg-yellow-600 text-white px-3 py-1 rounded text-xs font-bold">保存</button>
+                  </div>
+                  <div className="text-xs space-y-2 mb-4">
+                    <div className="flex gap-2 items-center">
+                      <span>売上</span><input type="number" className="w-16 border rounded p-1" value={configCaps.salesLow} onChange={e=>setConfigCaps({...configCaps, salesLow: Number(e.target.value)})} />
+                      <span>万円以下 →</span><input type="number" className="w-12 border rounded p-1" value={configCaps.hoursLow} onChange={e=>setConfigCaps({...configCaps, hoursLow: Number(e.target.value)})} /><span>時間</span>
+                    </div>
+                    <div className="flex gap-2 items-center">
+                      <span>売上</span><input type="number" className="w-16 border rounded p-1" value={configCaps.salesHigh} onChange={e=>setConfigCaps({...configCaps, salesHigh: Number(e.target.value)})} />
+                      <span>万円以下 →</span><input type="number" className="w-12 border rounded p-1" value={configCaps.hoursHigh} onChange={e=>setConfigCaps({...configCaps, hoursHigh: Number(e.target.value)})} /><span>時間</span>
+                    </div>
+                  </div>
+                  <hr className="border-yellow-200 my-2"/>
+                  <h4 className="font-bold text-xs text-yellow-800 mb-2">日別売上予算</h4>
+                  <div className="grid grid-cols-7 gap-1 text-center text-xs">
+                     {['日','月','火','水','木','金','土'].map((d,i) => (<div key={i} className="font-bold text-gray-400">{d}</div>))}
+                     {[...Array(daysInMonth)].map((_, i) => (
+                        <div key={i+1}><input type="number" className="w-full text-center border rounded focus:outline-none focus:border-yellow-500" placeholder="0" value={dailySales[i+1]||""} onChange={(e)=>handleSalesChange(i+1, e.target.value)} /></div>
+                     ))}
+                  </div>
                 </div>
-                <div className="overflow-x-auto border rounded-lg shadow-sm">
-                  <table className="min-w-full bg-white text-xs text-center border-collapse">
-                    <thead>
-                      <tr className="bg-gray-100 text-gray-600">
-                        <th className="p-2 border whitespace-nowrap sticky left-0 bg-gray-100 z-10">名前 (部門)</th>
-                        {[...Array(daysInMonth)].map((_, i) => (<th key={i} className={`p-1 border min-w-[24px] ${i%7===0?'text-red-500':(i+1)%7===0?'text-blue-500':''}`}>{i+1}</th>))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {getSortedStaffs().map((staff) => (
-                        <tr key={staff.id} className="hover:bg-gray-50">
-                          <td className="p-2 border font-bold text-left whitespace-nowrap sticky left-0 bg-white z-10">{staff.name} <span className="text-[10px] text-gray-400 font-normal">({staff.department || "-"})</span></td>
-                          {[...Array(daysInMonth)].map((_, i) => {
-                             const d_str = str(i+1); const dayData = determinedSchedule[d_str] || []; const myShift = dayData.find(s => s.staffId === staff.id);
-                             let cellText = "", cellClass = "";
-                             if (myShift) {
-                               cellText = shiftLabel(myShift.shift);
-                               if(cellText==="早") cellClass="text-blue-600 font-bold bg-blue-50";
-                               if(cellText==="中") cellClass="text-green-600 font-bold bg-green-50";
-                               if(cellText==="遅") cellClass="text-orange-600 font-bold bg-orange-50";
-                             }
-                             return <td key={i} className={`border h-8 ${cellClass}`}>{cellText}</td>;
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+
+                <div className="bg-indigo-50 p-4 rounded border border-indigo-200 shadow-sm">
+                  <h3 className="font-bold text-sm text-indigo-800 mb-2">🧠 1日の必要最低スキル値</h3>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    {Object.keys(minSkills).map(key => (
+                      <div key={key} className="flex justify-between items-center bg-white p-2 rounded border">
+                        <span className="capitalize">{key}</span>
+                        <input type="number" className="w-12 border rounded text-center" value={minSkills[key]} onChange={(e)=>setMinSkills({...minSkills, [key]: Number(e.target.value)})} />
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
-              <div className="grid md:grid-cols-2 gap-6">
-                <div className="bg-yellow-50 p-4 rounded border border-yellow-200">
-                  <h3 className="font-bold text-sm text-yellow-800 mb-2">💰 前年売上入力 ({month}月)</h3>
-                  <div className="flex justify-end mb-2"><button onClick={saveSalesConfig} className="bg-yellow-600 text-white px-3 py-1 rounded text-xs font-bold shadow">保存</button></div>
-                  <div className="grid grid-cols-7 gap-1 text-center text-xs">
-                     {['日','月','火','水','木','金','土'].map((d,i) => (<div key={i} className={`font-bold ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-400'}`}>{d}</div>))}
-                     {[...Array(daysInMonth)].map((_, i) => {
-                        const d = i + 1;
-                        return (<div key={d} className="bg-white border rounded p-1 flex flex-col items-center"><span className="text-gray-400 mb-1">{d}</span><input type="number" className="w-full text-center border-b border-yellow-200 focus:outline-none bg-transparent" placeholder="0" value={dailySales[d] || ""} onChange={(e) => handleSalesChange(d, e.target.value)} /></div>);
-                     })}
-                  </div>
-                </div>
-                <div className="space-y-6">
-                  <div className="p-4 rounded bg-gray-50 border">
-                    <h3 className="font-bold text-sm mb-2">👤 スタッフ追加</h3>
-                    <div className="flex flex-col gap-2">
-                      <div className="flex gap-2">
-                        <input type="text" placeholder="名前" className="border p-2 rounded flex-1" value={newStaffName} onChange={e=>setNewStaffName(e.target.value)} />
-                        <select className="border p-2 rounded" value={newStaffRank} onChange={e=>setNewStaffRank(e.target.value)}><option>店長</option><option>リーダー</option><option>社員</option><option>パートナー</option><option>新規パートナー</option></select>
-                      </div>
-                      <div className="flex gap-2">
-                         <select className="border p-2 rounded flex-1" value={newStaffDept} onChange={e=>setNewStaffDept(e.target.value)}><option value="家電">家電</option><option value="季節">季節</option><option value="情報">情報</option><option value="通信">通信</option><option value="-">所属なし(店長等)</option></select>
-                         <button onClick={handleAddStaff} className="bg-green-600 text-white p-2 rounded font-bold text-sm w-24">追加</button>
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-sm mb-2">登録スタッフ一覧</h3>
-                    <div className="space-y-2 h-64 overflow-y-auto border p-2 rounded bg-white">
-                      {getSortedStaffs().map((s) => (
-                        <div key={s.id} className="bg-white p-2 border-b flex items-center justify-between text-sm">
-                          <div>
-                            <div className="font-bold">{s.name} <span className="text-xs font-normal text-gray-500">({s.rank}/{s.department})</span></div>
-                            <div className="flex gap-2 mt-1">
-                              <button onClick={() => toggleCanClose(s)} className={`text-[10px] px-2 py-0.5 rounded border ${s.canClose ? 'bg-indigo-100 text-indigo-700 border-indigo-300' : 'bg-gray-100 text-gray-400'}`}>締め: {s.canClose?'OK':'NG'}</button>
-                              <button onClick={() => openSkillModal(s)} className="text-[10px] bg-gray-100 px-2 py-0.5 rounded border hover:bg-gray-200">スキル設定</button>
-                            </div>
+
+              {/* 右カラム：スタッフ管理 */}
+              <div className="space-y-4">
+                <div className="p-4 rounded bg-gray-50 border shadow-sm">
+                   <h3 className="font-bold text-sm mb-2">👤 スタッフ管理・会議設定</h3>
+                   
+                   {/* スタッフ追加 */}
+                   <div className="flex flex-wrap gap-2 mb-4 p-2 bg-white rounded border">
+                      <input type="text" placeholder="名前" className="border p-1 rounded flex-1 text-sm" value={newStaffName} onChange={e=>setNewStaffName(e.target.value)} />
+                      <select className="border p-1 rounded text-sm" value={newStaffRank} onChange={e=>setNewStaffRank(e.target.value)}><option>店長</option><option>リーダー</option><option>社員</option><option>パートナー</option><option>新規パートナー</option></select>
+                      <select className="border p-1 rounded text-sm" value={newStaffDept} onChange={e=>setNewStaffDept(e.target.value)}><option>家電</option><option>季節</option><option>情報</option><option>通信</option><option>-</option></select>
+                      <button onClick={handleAddStaff} className="bg-green-600 text-white p-1 px-3 rounded font-bold text-xs">追加</button>
+                   </div>
+
+                   {/* スタッフリスト */}
+                   <div className="space-y-2 h-[500px] overflow-y-auto pr-2">
+                      {getSortedStaffs().map(s => (
+                        <div key={s.id} className="bg-white p-2 border rounded text-xs">
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="font-bold text-sm">{s.name} <span className="text-gray-500 font-normal">({s.rank}/{s.department})</span></span>
+                            <button onClick={()=>deleteDoc(doc(db,"staffs",s.id)).then(fetchStaffs)} className="text-red-400 hover:text-red-600">削除</button>
                           </div>
-                          <button onClick={async()=>{if(confirm("削除しますか？")) { await deleteDoc(doc(db,"staffs",s.id)); fetchStaffs(); }}} className="text-red-400 text-xs px-2">削除</button>
+                          <div className="flex flex-wrap gap-2 items-center">
+                            <span className="bg-gray-100 px-1 rounded">上限:{s.maxDays||22}日</span>
+                            <input type="number" className="w-8 border text-center" defaultValue={s.maxDays||22} onBlur={(e)=>updateMaxDays(s, e.target.value)} />
+                            <button onClick={()=>toggleKeyStatus(s,'canOpen')} className={`px-2 py-0.5 rounded border ${s.canOpen?'bg-orange-100 text-orange-700':'bg-gray-100 text-gray-400'}`}>鍵開</button>
+                            <button onClick={()=>toggleKeyStatus(s,'canClose')} className={`px-2 py-0.5 rounded border ${s.canClose?'bg-indigo-100 text-indigo-700':'bg-gray-100 text-gray-400'}`}>鍵締</button>
+                            <button onClick={()=>openSkillModal(s)} className="bg-gray-100 px-2 py-0.5 rounded border">スキル</button>
+                          </div>
+                          {/* 会議設定 */}
+                          <div className="mt-2 pt-1 border-t flex flex-wrap gap-1">
+                             <span className="text-gray-400">会議:</span>
+                             {[...Array(daysInMonth)].map((_, i) => {
+                               const d = String(i+1);
+                               const isMeeting = meetingSchedule[d]?.includes(s.id);
+                               return (
+                                 <button key={d} onClick={()=>toggleMeeting(d, s.id)} 
+                                   className={`w-5 h-5 flex items-center justify-center rounded text-[9px] ${isMeeting ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-300'}`}
+                                 >{d}</button>
+                               )
+                             })}
+                          </div>
                         </div>
                       ))}
-                    </div>
-                  </div>
+                   </div>
                 </div>
               </div>
             </div>
           )}
-          {!isAdmin && (<div className="mt-12 text-right"><details className="text-xs text-gray-300"><summary className="list-none cursor-pointer p-2">Admin</summary><div className="flex gap-1 justify-end p-2"><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="border rounded w-16" /><button onClick={handleLogin} className="bg-gray-400 text-white px-2 rounded">Go</button></div></details></div>)}
+
+          {/* ▼▼▼ 管理者画面：タブ2「シフト表・分析」 ▼▼▼ */}
+          {isAdmin && activeTab === "shift" && (
+            <div>
+              <div className="flex justify-between items-end mb-4">
+                 <h2 className="font-bold text-lg text-gray-700">📊 シフト分析・出力</h2>
+                 <div className="flex gap-2">
+                   <button onClick={handleCreateShift} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded shadow text-sm">⚡ クラウドでシフト作成</button>
+                   {Object.keys(determinedSchedule).length > 0 && (
+                     <button onClick={downloadCSV} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded shadow flex items-center gap-2 text-sm">📄 CSV</button>
+                   )}
+                 </div>
+              </div>
+              
+              {/* シフト表 */}
+              <div className="overflow-x-auto border rounded-lg shadow-sm mb-8 bg-white">
+                <table className="min-w-full text-xs text-center border-collapse">
+                  <thead>
+                    <tr className="bg-gray-100 text-gray-600">
+                      <th className="p-2 border whitespace-nowrap sticky left-0 bg-gray-100 z-10">名前</th>
+                      {[...Array(daysInMonth)].map((_, i) => (<th key={i} className={`p-1 border min-w-[24px] ${i%7===0?'text-red-500':(i+1)%7===0?'text-blue-500':''}`}>{i+1}</th>))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {getSortedStaffs().map((s) => (
+                      <tr key={s.id} className="hover:bg-gray-50">
+                        <td className="p-2 border font-bold text-left whitespace-nowrap sticky left-0 bg-white z-10">{s.name} <span className="text-[9px] text-gray-400">({s.rank.substr(0,2)})</span></td>
+                        {[...Array(daysInMonth)].map((_, i) => {
+                           const d = String(i+1);
+                           const shift = (determinedSchedule[d] || []).find(x => x.staffId === s.id);
+                           let disp = "", cls = "";
+                           if (shift) {
+                             disp = getShiftDisplay(shift.shift, shift.start, shift.end);
+                             if(disp==="早") cls="text-blue-600 font-bold bg-blue-50";
+                             if(disp==="中") cls="text-green-600 font-bold bg-green-50";
+                             if(disp==="遅") cls="text-orange-600 font-bold bg-orange-50";
+                             if(disp==="議") cls="text-purple-600 font-bold bg-purple-50";
+                             if(disp.length > 2) cls="text-xs text-gray-600 bg-gray-50 font-bold"; // 1120など
+                           }
+                           return <td key={i} className={`border h-8 ${cls}`}>{disp}</td>;
+                        })}
+                      </tr>
+                    ))}
+                    {/* 日別スキル合計行 */}
+                    <tr className="bg-gray-50 font-bold border-t-2">
+                       <td className="p-2 border sticky left-0 bg-gray-50">日別スキル充足</td>
+                       {[...Array(daysInMonth)].map((_, i) => {
+                          const d = String(i+1);
+                          const workers = determinedSchedule[d] || [];
+                          // スキル合計計算
+                          let isLack = false;
+                          Object.keys(minSkills).forEach(k => {
+                            if(minSkills[k] > 0) {
+                              const sum = workers.reduce((acc, w) => acc + (staffs.find(s=>s.id===w.staffId)?.skills?.[k] || 0), 0);
+                              if(sum < minSkills[k]) isLack = true;
+                            }
+                          });
+                          return <td key={i} className={`border ${isLack ? 'bg-red-200 text-red-800' : 'text-gray-400'}`}>{isLack?'⚠':'OK'}</td>
+                       })}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* スキル保有量グラフ（簡易版） */}
+              <div className="bg-white p-4 rounded border shadow-sm">
+                <h3 className="font-bold text-sm mb-4">📈 スタッフ総スキル保有量</h3>
+                <div className="flex gap-4 items-end h-32 border-b">
+                   {Object.keys(minSkills).map(k => {
+                     const total = staffs.reduce((acc, s) => acc + (s.skills?.[k]||0), 0);
+                     return (
+                       <div key={k} className="flex-1 flex flex-col items-center gap-1 group">
+                         <span className="text-xs font-bold">{total}</span>
+                         <div className="w-full bg-blue-200 rounded-t hover:bg-blue-300 transition-all" style={{height: `${Math.min(total*2, 100)}px`}}></div>
+                         <span className="text-[10px] uppercase text-gray-500">{k}</span>
+                       </div>
+                     )
+                   })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!isAdmin && <div className="mt-12 text-right"><details className="text-xs text-gray-300"><summary>Admin</summary><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="border rounded w-16" /><button onClick={handleLogin}>Go</button></details></div>}
         </div>
+
+        {/* モーダル類 */}
         {modalOpen && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
@@ -384,6 +495,7 @@ export default function Home() {
             </div>
           </div>
         )}
+        
         {skillModalOpen && editingStaff && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setSkillModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
@@ -402,4 +514,3 @@ export default function Home() {
     </div>
   );
 }
-function str(n) { return String(n); }
