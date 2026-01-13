@@ -1,8 +1,8 @@
 "use client";
 import { useState, useEffect } from "react";
-// ▼ Firebaseを使うための部品をインポート
-import { db } from "../lib/firebase.js";
-import { collection, addDoc } from "firebase/firestore";
+import { db } from "../lib/firebase";
+// 必要な機能をインポート（データ取得、追加、削除）
+import { collection, addDoc, getDocs, deleteDoc, doc, query, orderBy } from "firebase/firestore";
 
 export default function Home() {
   const [isAdmin, setIsAdmin] = useState(false);
@@ -10,9 +10,13 @@ export default function Home() {
   const [year, setYear] = useState(0);
   const [month, setMonth] = useState(0);
   
-  // ▼ 入力された名前を管理する変数
-  const [name, setName] = useState("");
+  // ▼ スタッフ管理用
+  const [staffs, setStaffs] = useState([]); // 登録されたスタッフ一覧
+  const [selectedStaffId, setSelectedStaffId] = useState(""); // プルダウンで選ばれた人のID
+  const [newStaffName, setNewStaffName] = useState(""); // 新規登録する名前
+  const [newStaffRank, setNewStaffRank] = useState("パートナー"); // 新規登録するランク
 
+  // ▼ 初期化（日付設定 & スタッフ一覧取得）
   useEffect(() => {
     const today = new Date();
     if (today.getDate() >= 15) {
@@ -20,8 +24,29 @@ export default function Home() {
     }
     setYear(today.getFullYear());
     setMonth(today.getMonth() + 1);
+
+    // スタッフ一覧をデータベースから取ってくる
+    fetchStaffs();
   }, []);
 
+  // データベースからスタッフ一覧を読み込む関数
+  const fetchStaffs = async () => {
+    try {
+      // ランク順とかに並べたいけど一旦登録順
+      const q = query(collection(db, "staffs"), orderBy("rankId", "asc")); 
+      const querySnapshot = await getDocs(q);
+      const list = [];
+      querySnapshot.forEach((doc) => {
+        list.push({ id: doc.id, ...doc.data() });
+      });
+      setStaffs(list);
+    } catch (e) {
+      // まだデータがない時はエラーになるかもなので無視
+      console.log("まだスタッフがいません");
+    }
+  };
+
+  // ▼ 管理者ログイン
   const handleLogin = () => {
     if (password === "admin123") {
       setIsAdmin(true);
@@ -30,28 +55,62 @@ export default function Home() {
     }
   };
 
-  // ▼ データ保存を実行する関数（ここが新機能！）
+  // ▼ スタッフ追加（管理者用）
+  const handleAddStaff = async () => {
+    if (!newStaffName) return;
+    
+    // ランクの並び順用数値（店長が偉い）
+    const rankMap = { "店長": 1, "リーダー": 2, "社員": 3, "パートナー": 4, "新規パートナー": 5 };
+
+    try {
+      await addDoc(collection(db, "staffs"), {
+        name: newStaffName,
+        rank: newStaffRank,
+        rankId: rankMap[newStaffRank] || 99
+      });
+      setNewStaffName("");
+      alert(`${newStaffName}さんを登録しました`);
+      fetchStaffs(); // リストを再読み込み
+    } catch (error) {
+      console.error(error);
+      alert("登録失敗");
+    }
+  };
+
+  // ▼ スタッフ削除（管理者用）
+  const handleDeleteStaff = async (id, name) => {
+    if(!confirm(`${name}さんを削除しますか？`)) return;
+    try {
+      await deleteDoc(doc(db, "staffs", id));
+      fetchStaffs();
+    } catch (error) {
+      alert("削除失敗");
+    }
+  };
+
+  // ▼ シフト提出（テスト用）
   const handleSubmit = async () => {
-    if (!name) {
-      alert("お名前を入力してください！");
+    if (!selectedStaffId) {
+      alert("名前を選択してください！");
       return;
     }
 
+    // IDから名前を探す
+    const staff = staffs.find(s => s.id === selectedStaffId);
+
     try {
-      // "shifts" という箱にデータを入れる
       await addDoc(collection(db, "shifts"), {
-        name: name,
+        name: staff.name,
+        rank: staff.rank,
         year: year,
         month: month,
-        createdAt: new Date(), // 送信した日時
-        message: "接続テスト成功！"
+        createdAt: new Date(),
+        message: "スタッフ選択式で送信成功！"
       });
-      
-      alert("✅ 送信成功！データベースに保存されました。");
-      setName(""); // 入力欄を空にする
+      alert(`✅ ${staff.name}さんのシフト希望を送信しました（テスト）`);
     } catch (error) {
-      console.error("Error:", error);
-      alert("❌ エラー：保存できませんでした。\n" + error.message);
+      console.error(error);
+      alert("送信エラー");
     }
   };
 
@@ -61,50 +120,68 @@ export default function Home() {
         
         <div className="bg-blue-600 p-4 text-white text-center">
           <h1 className="text-xl font-bold">
-            {year}年 {month}月 シフト{isAdmin ? "作成（管理者）" : "提出"}
+            {year}年 {month}月 シフト{isAdmin ? "管理" : "提出"}
           </h1>
         </div>
 
         <div className="p-6">
+          {/* ▼▼▼ 一般スタッフ画面 ▼▼▼ */}
           {!isAdmin && (
             <div>
+              {/* 1. 名前選択（一番上に配置） */}
+              <div className="mb-6 bg-blue-50 p-4 rounded-lg border border-blue-100">
+                <label className="block text-sm font-bold mb-2 text-blue-800">
+                  誰のシフトですか？
+                </label>
+                <select 
+                  className="w-full p-3 border rounded-lg bg-white shadow-sm"
+                  value={selectedStaffId}
+                  onChange={(e) => setSelectedStaffId(e.target.value)}
+                >
+                  <option value="">▼ 名前を選択してください</option>
+                  {staffs.map((staff) => (
+                    <option key={staff.id} value={staff.id}>
+                      {staff.name} ({staff.rank})
+                    </option>
+                  ))}
+                </select>
+                {staffs.length === 0 && (
+                  <p className="text-xs text-red-500 mt-1">
+                    ※管理者がまだスタッフを登録していません
+                  </p>
+                )}
+              </div>
+
               <p className="mb-4 text-sm text-gray-600">
-                希望するシフトを入力して提出してください。<br/>
+                希望シフトを選択してください。<br/>
                 <span className="text-red-500 text-xs">※締切: 20日まで</span>
               </p>
               
-              <div className="grid grid-cols-7 gap-1 mb-4 text-center text-sm">
+              {/* カレンダー（まだ見た目だけ） */}
+              <div className="grid grid-cols-7 gap-1 mb-6 text-center text-sm">
                 {['日','月','火','水','木','金','土'].map(d => (
                   <div key={d} className="font-bold text-gray-400">{d}</div>
                 ))}
                 {[...Array(30)].map((_, i) => (
-                  <div key={i} className="border p-2 rounded hover:bg-blue-50 cursor-pointer">
+                  <div key={i} className="border p-2 rounded text-gray-300">
                     {i + 1}
                   </div>
                 ))}
               </div>
 
-              {/* ▼ 名前入力欄をプログラムと接続 */}
-              <input 
-                type="text" 
-                placeholder="お名前" 
-                className="w-full p-2 border rounded mb-4 bg-gray-50"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-              
-              {/* ▼ ボタンを押すと handleSubmit が動くように設定 */}
               <button 
                 onClick={handleSubmit}
-                className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition"
+                className={`w-full py-3 rounded-lg font-bold transition ${selectedStaffId ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
+                disabled={!selectedStaffId}
               >
-                シフトを提出する（テスト）
+                シフトを提出する
               </button>
 
+              {/* 管理者メニューへの入り口 */}
               <div className="mt-8 pt-4 border-t text-right">
                 <details className="text-xs text-gray-400">
                   <summary className="cursor-pointer list-none">管理者メニュー</summary>
-                  <div className="mt-2 flex gap-2">
+                  <div className="mt-2 flex gap-2 justify-end">
                     <input 
                       type="password" 
                       placeholder="pass" 
@@ -124,10 +201,11 @@ export default function Home() {
             </div>
           )}
 
+          {/* ▼▼▼ 管理者画面（スタッフ登録機能を追加） ▼▼▼ */}
           {isAdmin && (
             <div>
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="font-bold text-lg">管理者ダッシュボード</h2>
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="font-bold text-lg">管理者設定</h2>
                 <button 
                   onClick={() => setIsAdmin(false)}
                   className="text-xs text-blue-600 underline"
@@ -136,18 +214,56 @@ export default function Home() {
                 </button>
               </div>
 
-              <div className="space-y-3">
-                <button className="w-full border-2 border-dashed border-gray-300 p-4 rounded text-gray-500 hover:border-blue-500 hover:text-blue-500">
-                  Pythonでシフト自動作成を実行
-                </button>
-                
-                <div className="bg-gray-100 p-3 rounded">
-                  <h3 className="text-sm font-bold mb-2">提出状況</h3>
-                  <ul className="text-sm space-y-1">
-                    <li className="flex justify-between"><span>田中</span> <span className="text-green-600">提出済</span></li>
-                  </ul>
+              {/* スタッフ登録フォーム */}
+              <div className="mb-8 border p-4 rounded-lg bg-gray-50">
+                <h3 className="font-bold text-sm mb-3">👤 スタッフ登録</h3>
+                <div className="flex gap-2 mb-2">
+                  <input 
+                    type="text" 
+                    placeholder="名前" 
+                    className="border p-2 rounded flex-1"
+                    value={newStaffName}
+                    onChange={(e) => setNewStaffName(e.target.value)}
+                  />
+                  <select 
+                    className="border p-2 rounded"
+                    value={newStaffRank}
+                    onChange={(e) => setNewStaffRank(e.target.value)}
+                  >
+                    <option>店長</option>
+                    <option>リーダー</option>
+                    <option>社員</option>
+                    <option>パートナー</option>
+                    <option>新規パートナー</option>
+                  </select>
                 </div>
+                <button 
+                  onClick={handleAddStaff}
+                  className="w-full bg-green-600 text-white p-2 rounded hover:bg-green-700 font-bold text-sm"
+                >
+                  追加する
+                </button>
               </div>
+
+              {/* 登録済みスタッフ一覧 */}
+              <div>
+                <h3 className="font-bold text-sm mb-2">登録済みリスト ({staffs.length}名)</h3>
+                <ul className="space-y-2">
+                  {staffs.map((s) => (
+                    <li key={s.id} className="flex justify-between items-center bg-white p-2 border rounded shadow-sm">
+                      <span>{s.name} <span className="text-xs text-gray-500">({s.rank})</span></span>
+                      <button 
+                        onClick={() => handleDeleteStaff(s.id, s.name)}
+                        className="text-red-500 text-xs border border-red-200 px-2 py-1 rounded hover:bg-red-50"
+                      >
+                        削除
+                      </button>
+                    </li>
+                  ))}
+                  {staffs.length === 0 && <li className="text-gray-400 text-sm">まだ登録がありません</li>}
+                </ul>
+              </div>
+              
             </div>
           )}
         </div>
