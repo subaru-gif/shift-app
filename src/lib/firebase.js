@@ -1,20 +1,22 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
+// 新しいプロジェクト(shift-mane)の設定
 const firebaseConfig = {
-  apiKey: "AIzaSyC_gAW0sQZ4deYTN34JAAz5vlFJa3m2tlc",
-  authDomain: "himonnya-customer-tool.firebaseapp.com",
-  projectId: "himonnya-customer-tool",
-  storageBucket: "himonnya-customer-tool.firebasestorage.app",
-  messagingSenderId: "132254546054",
-  appId: "1:132254546054:web:5a3c8be43bc87cbfc4b907",
-  measurementId: "G-2PE1QN9394"
+  apiKey: "AIzaSyD4Yn7aJrUkiSnZwqXQ-nXqAV6XXmvzIAs",
+  authDomain: "shift-mane.firebaseapp.com",
+  projectId: "shift-mane",
+  storageBucket: "shift-mane.firebasestorage.app",
+  messagingSenderId: "579606969372",
+  appId: "1:579606969372:web:f6688a96df21029de2b3d9",
+  measurementId: "G-SXRBT0F4KJ"
 };
 
 // アプリの二重起動を防ぐおまじない
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+
+// データベースを使う準備
 const db = getFirestore(app);
 
-// ▼▼▼ これが一番大事な行です！ ▼▼▼
+// これを忘れずに！
 export { db };
-// update
