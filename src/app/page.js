@@ -17,7 +17,7 @@ export default function Home() {
   const [requests, setRequests] = useState({});
   const [dailySales, setDailySales] = useState({});
   const [determinedSchedule, setDeterminedSchedule] = useState({});
-  const [meetingSchedule, setMeetingSchedule] = useState({}); // { "1": ["staffId1", "staffId2"] }
+  const [meetingSchedule, setMeetingSchedule] = useState({}); 
 
   // ▼ 設定（キャップ・スキル）
   const [configCaps, setConfigCaps] = useState({
@@ -56,29 +56,35 @@ export default function Home() {
   }, []);
 
   const fetchStaffs = async () => {
-    const q = query(collection(db, "staffs"), orderBy("rankId", "asc")); 
-    const snap = await getDocs(q);
-    const list = [];
-    snap.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-    setStaffs(list);
+    try {
+      const q = query(collection(db, "staffs"), orderBy("rankId", "asc")); 
+      const snap = await getDocs(q);
+      const list = [];
+      snap.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+      setStaffs(list);
+    } catch (e) { console.log("Error fetching staffs"); }
   };
 
   const fetchConfig = async (y, m) => {
-    const docId = `${y}-${m}`; 
-    const snap = await getDoc(doc(db, "monthlyConfig", docId));
-    if (snap.exists()) {
-      const data = snap.data();
-      setDailySales(data.dailySales || {});
-      setConfigCaps(data.caps || { salesLow: 100, hoursLow: 70, salesHigh: 500, hoursHigh: 100 });
-      setMinSkills(data.minSkills || { fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 });
-      setMeetingSchedule(data.meetings || {});
-    }
+    try {
+      const docId = `${y}-${m}`; 
+      const snap = await getDoc(doc(db, "monthlyConfig", docId));
+      if (snap.exists()) {
+        const data = snap.data();
+        setDailySales(data.dailySales || {});
+        setConfigCaps(data.caps || { salesLow: 100, hoursLow: 70, salesHigh: 500, hoursHigh: 100 });
+        setMinSkills(data.minSkills || { fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 });
+        setMeetingSchedule(data.meetings || {});
+      }
+    } catch (e) { console.log("Config fetch error"); }
   };
 
   const fetchDeterminedShift = async (y, m) => {
-    const docId = `${y}-${m}`;
-    const snap = await getDoc(doc(db, "determined_shifts", docId));
-    if (snap.exists()) setDeterminedSchedule(snap.data().schedule || {});
+    try {
+      const docId = `${y}-${m}`;
+      const snap = await getDoc(doc(db, "determined_shifts", docId));
+      if (snap.exists()) setDeterminedSchedule(snap.data().schedule || {});
+    } catch (e) { console.log("Determined shift fetch error"); }
   };
 
   const saveConfig = async () => {
@@ -97,17 +103,18 @@ export default function Home() {
 
   const handleSalesChange = (day, value) => setDailySales(prev => ({ ...prev, [day]: value }));
   
-  // スタッフ操作
   const handleAddStaff = async () => {
     if (!newStaffName) return;
     const rankMap = { "店長": 1, "リーダー": 2, "社員": 3, "パートナー": 4, "新規パートナー": 5 };
-    await addDoc(collection(db, "staffs"), { 
-      name: newStaffName, rank: newStaffRank, rankId: rankMap[newStaffRank] || 99,
-      department: newStaffDept, maxDays: Number(newStaffMaxDays),
-      canOpen: false, canClose: false,
-      skills: { fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 }
-    });
-    setNewStaffName(""); fetchStaffs();
+    try {
+      await addDoc(collection(db, "staffs"), { 
+        name: newStaffName, rank: newStaffRank, rankId: rankMap[newStaffRank] || 99,
+        department: newStaffDept, maxDays: Number(newStaffMaxDays),
+        canOpen: false, canClose: false,
+        skills: { fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 }
+      });
+      setNewStaffName(""); fetchStaffs();
+    } catch (error) { alert("登録失敗"); }
   };
 
   const toggleKeyStatus = async (staff, type) => {
@@ -122,12 +129,13 @@ export default function Home() {
     await updateDoc(doc(db, "staffs", staff.id), { maxDays: num });
   };
 
-  // スキル操作
   const openSkillModal = (staff) => { setEditingStaff({ ...staff }); setSkillModalOpen(true); };
   const saveSkills = async () => {
     if (!editingStaff) return;
-    await updateDoc(doc(db, "staffs", editingStaff.id), { skills: editingStaff.skills });
-    setSkillModalOpen(false); fetchStaffs();
+    try {
+      await updateDoc(doc(db, "staffs", editingStaff.id), { skills: editingStaff.skills });
+      setSkillModalOpen(false); fetchStaffs();
+    } catch (e) { alert("スキル保存失敗"); }
   };
   const handleSkillClick = (key, num) => {
     setEditingStaff(prev => {
@@ -136,7 +144,6 @@ export default function Home() {
     });
   };
 
-  // シフト希望
   const handleDateClick = (day) => {
     if (!selectedStaffId) { alert("先に名前を選択してください"); return; }
     setSelectedDay(day); setModalOpen(true);
@@ -153,13 +160,19 @@ export default function Home() {
     if (!selectedStaffId) return;
     const staff = staffs.find(s => s.id === selectedStaffId);
     if(!confirm(`提出しますか？`)) return;
-    await addDoc(collection(db, "shifts"), {
-      staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests, createdAt: new Date()
-    });
-    alert("✅ 提出完了！"); setRequests({}); setSelectedStaffId("");
+    try {
+      await addDoc(collection(db, "shifts"), {
+        staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests, createdAt: new Date()
+      });
+      alert("✅ 提出完了！"); setRequests({}); setSelectedStaffId("");
+    } catch (e) { alert("エラー"); }
   };
 
-  // 会議登録
+  // ★★★ 追加したログイン関数 ★★★
+  const handleLogin = () => {
+    if (password === "333191") setIsAdmin(true); else alert("パスワードが違います");
+  };
+
   const toggleMeeting = (day, staffId) => {
     setMeetingSchedule(prev => {
       const dayList = prev[day] || [];
@@ -168,12 +181,11 @@ export default function Home() {
     });
   };
 
-  // API呼び出し
   const handleCreateShift = async () => {
     if(!confirm("クラウドAIでシフトを作成しますか？")) return;
     try {
       alert("🤖 計算中...");
-      await saveConfig(); // 最新設定を保存してから
+      await saveConfig(); 
       const res = await fetch('/api', { method: 'POST' }); 
       if (res.ok) {
         const data = await res.json();
@@ -186,15 +198,14 @@ export default function Home() {
     } catch (e) { alert("❌ 通信エラー"); }
   };
 
-  // 表示用ヘルパー
   const getShiftDisplay = (shiftCode, start, end) => {
     if (shiftCode === "A") return "早";
     if (shiftCode === "B") return "中";
     if (shiftCode === "C") return "遅";
+    if (shiftCode === "M") return "議";
     if (shiftCode === "会議") return "議";
     if (shiftCode === "有給") return "有";
     if (shiftCode === "時間指定" && start && end) {
-      // 11:00 -> 11, 20:00 -> 20 => 1120
       const s = start.split(":")[0];
       const e = end.split(":")[0];
       return `${s}${e}`;
@@ -240,7 +251,6 @@ export default function Home() {
     <div className="min-h-screen bg-gray-50 p-2 font-sans text-gray-800 pb-20">
       <div className="max-w-7xl mx-auto bg-white shadow-xl rounded-xl overflow-hidden">
         
-        {/* ヘッダー */}
         <div className="bg-blue-700 p-4 text-white flex justify-between items-center sticky top-0 z-20 shadow">
           <h1 className="text-xl font-bold">{year}年{month}月 シフト{isAdmin ? "管理" : "提出"}</h1>
           {isAdmin && (
@@ -253,7 +263,6 @@ export default function Home() {
         </div>
 
         <div className="p-4">
-          {/* ▼▼▼ 一般スタッフ画面（提出用） ▼▼▼ */}
           {!isAdmin && (
             <div className="max-w-md mx-auto">
               <div className="mb-4 bg-blue-50 p-3 rounded border border-blue-100">
@@ -288,10 +297,8 @@ export default function Home() {
             </div>
           )}
 
-          {/* ▼▼▼ 管理者画面：タブ1「設定・入力」 ▼▼▼ */}
           {isAdmin && activeTab === "input" && (
             <div className="grid lg:grid-cols-2 gap-8">
-              {/* 左カラム：基本設定 */}
               <div className="space-y-6">
                 <div className="bg-yellow-50 p-4 rounded border border-yellow-200 shadow-sm">
                   <div className="flex justify-between items-center mb-3">
@@ -331,12 +338,10 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* 右カラム：スタッフ管理 */}
               <div className="space-y-4">
                 <div className="p-4 rounded bg-gray-50 border shadow-sm">
                    <h3 className="font-bold text-sm mb-2">👤 スタッフ管理・会議設定</h3>
                    
-                   {/* スタッフ追加 */}
                    <div className="flex flex-wrap gap-2 mb-4 p-2 bg-white rounded border">
                       <input type="text" placeholder="名前" className="border p-1 rounded flex-1 text-sm" value={newStaffName} onChange={e=>setNewStaffName(e.target.value)} />
                       <select className="border p-1 rounded text-sm" value={newStaffRank} onChange={e=>setNewStaffRank(e.target.value)}><option>店長</option><option>リーダー</option><option>社員</option><option>パートナー</option><option>新規パートナー</option></select>
@@ -344,7 +349,6 @@ export default function Home() {
                       <button onClick={handleAddStaff} className="bg-green-600 text-white p-1 px-3 rounded font-bold text-xs">追加</button>
                    </div>
 
-                   {/* スタッフリスト */}
                    <div className="space-y-2 h-[500px] overflow-y-auto pr-2">
                       {getSortedStaffs().map(s => (
                         <div key={s.id} className="bg-white p-2 border rounded text-xs">
@@ -359,7 +363,6 @@ export default function Home() {
                             <button onClick={()=>toggleKeyStatus(s,'canClose')} className={`px-2 py-0.5 rounded border ${s.canClose?'bg-indigo-100 text-indigo-700':'bg-gray-100 text-gray-400'}`}>鍵締</button>
                             <button onClick={()=>openSkillModal(s)} className="bg-gray-100 px-2 py-0.5 rounded border">スキル</button>
                           </div>
-                          {/* 会議設定 */}
                           <div className="mt-2 pt-1 border-t flex flex-wrap gap-1">
                              <span className="text-gray-400">会議:</span>
                              {[...Array(daysInMonth)].map((_, i) => {
@@ -380,7 +383,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* ▼▼▼ 管理者画面：タブ2「シフト表・分析」 ▼▼▼ */}
           {isAdmin && activeTab === "shift" && (
             <div>
               <div className="flex justify-between items-end mb-4">
@@ -393,7 +395,6 @@ export default function Home() {
                  </div>
               </div>
               
-              {/* シフト表 */}
               <div className="overflow-x-auto border rounded-lg shadow-sm mb-8 bg-white">
                 <table className="min-w-full text-xs text-center border-collapse">
                   <thead>
@@ -416,19 +417,17 @@ export default function Home() {
                              if(disp==="中") cls="text-green-600 font-bold bg-green-50";
                              if(disp==="遅") cls="text-orange-600 font-bold bg-orange-50";
                              if(disp==="議") cls="text-purple-600 font-bold bg-purple-50";
-                             if(disp.length > 2) cls="text-xs text-gray-600 bg-gray-50 font-bold"; // 1120など
+                             if(disp.length > 2) cls="text-xs text-gray-600 bg-gray-50 font-bold";
                            }
                            return <td key={i} className={`border h-8 ${cls}`}>{disp}</td>;
                         })}
                       </tr>
                     ))}
-                    {/* 日別スキル合計行 */}
                     <tr className="bg-gray-50 font-bold border-t-2">
                        <td className="p-2 border sticky left-0 bg-gray-50">日別スキル充足</td>
                        {[...Array(daysInMonth)].map((_, i) => {
                           const d = String(i+1);
                           const workers = determinedSchedule[d] || [];
-                          // スキル合計計算
                           let isLack = false;
                           Object.keys(minSkills).forEach(k => {
                             if(minSkills[k] > 0) {
@@ -443,7 +442,6 @@ export default function Home() {
                 </table>
               </div>
 
-              {/* スキル保有量グラフ（簡易版） */}
               <div className="bg-white p-4 rounded border shadow-sm">
                 <h3 className="font-bold text-sm mb-4">📈 スタッフ総スキル保有量</h3>
                 <div className="flex gap-4 items-end h-32 border-b">
@@ -462,10 +460,9 @@ export default function Home() {
             </div>
           )}
 
-          {!isAdmin && <div className="mt-12 text-right"><details className="text-xs text-gray-300"><summary>Admin</summary><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="border rounded w-16" /><button onClick={handleLogin}>Go</button></details></div>}
+          {!isAdmin && <div className="mt-12 text-right"><details className="text-xs text-gray-300"><summary className="cursor-pointer">Admin</summary><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="border rounded w-16" /><button onClick={handleLogin}>Go</button></details></div>}
         </div>
 
-        {/* モーダル類 */}
         {modalOpen && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
@@ -514,3 +511,4 @@ export default function Home() {
     </div>
   );
 }
+function str(n) { return String(n); }
