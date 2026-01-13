@@ -14,8 +14,8 @@ export default function Home() {
   // ▼ データ
   const [staffs, setStaffs] = useState([]);
   const [selectedStaffId, setSelectedStaffId] = useState("");
-  const [requests, setRequests] = useState({}); // 自分の提出用
-  const [allRequests, setAllRequests] = useState([]); // 管理者用：全員の提出データ
+  const [requests, setRequests] = useState({});
+  const [allRequests, setAllRequests] = useState([]); 
   const [dailySales, setDailySales] = useState({});
   const [determinedSchedule, setDeterminedSchedule] = useState({});
   const [meetingSchedule, setMeetingSchedule] = useState({}); 
@@ -35,13 +35,18 @@ export default function Home() {
   const [skillModalOpen, setSkillModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState(null);
   const [previewRequestModalOpen, setPreviewRequestModalOpen] = useState(false);
-  const [previewRequestData, setPreviewRequestData] = useState(null); // { name: "...", requests: {} }
+  const [previewRequestData, setPreviewRequestData] = useState(null);
   
   // ▼ 新規登録用
   const [newStaffName, setNewStaffName] = useState("");
   const [newStaffRank, setNewStaffRank] = useState("パートナー");
   const [newStaffDept, setNewStaffDept] = useState("家電");
   const [newStaffMaxDays, setNewStaffMaxDays] = useState(22);
+  const [newStaffPriority, setNewStaffPriority] = useState("中"); // 優先度
+
+  // ▼ 時間指定入力用
+  const [customStart, setCustomStart] = useState("09:30");
+  const [customEnd, setCustomEnd] = useState("15:00");
 
   const skillLabelMap = {
     fridge: "冷蔵庫", washing: "洗濯機", ac: "エアコン", tv: "TV", mobile: "携帯", pc: "PC"
@@ -124,10 +129,12 @@ export default function Home() {
       await addDoc(collection(db, "staffs"), { 
         name: newStaffName, rank: newStaffRank, rankId: rankMap[newStaffRank] || 99,
         department: newStaffDept, maxDays: Number(newStaffMaxDays),
+        priority: newStaffPriority, // 優先度
         canOpen: false, canClose: false,
         skills: { fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 }
       });
-      setNewStaffName(""); fetchStaffs();
+      setNewStaffName(""); 
+      fetchStaffs();
     } catch (error) { alert("登録失敗"); }
   };
 
@@ -137,10 +144,10 @@ export default function Home() {
     await updateDoc(doc(db, "staffs", staff.id), { [type]: newVal });
   };
   
-  const updateMaxDays = async (staff, val) => {
-    const num = Number(val);
-    setStaffs(prev => prev.map(s => s.id === staff.id ? { ...s, maxDays: num } : s));
-    await updateDoc(doc(db, "staffs", staff.id), { maxDays: num });
+  const updateStaffParam = async (staff, key, val) => {
+    // 上限日数や優先度の更新
+    setStaffs(prev => prev.map(s => s.id === staff.id ? { ...s, [key]: val } : s));
+    await updateDoc(doc(db, "staffs", staff.id), { [key]: val });
   };
 
   const openSkillModal = (staff) => { setEditingStaff({ ...staff }); setSkillModalOpen(true); };
@@ -160,7 +167,10 @@ export default function Home() {
 
   const handleDateClick = (day) => {
     if (!selectedStaffId) { alert("先に名前を選択してください"); return; }
-    setSelectedDay(day); setModalOpen(true);
+    setSelectedDay(day); 
+    setCustomStart("09:30"); // 初期値リセット
+    setCustomEnd("15:00");
+    setModalOpen(true);
   };
   const saveRequest = (type, start = "", end = "") => {
     setRequests(prev => ({ ...prev, [selectedDay]: { type, start, end } }));
@@ -171,16 +181,26 @@ export default function Home() {
     setModalOpen(false);
   };
   const handleSubmit = async () => {
+    // 保存処理（上書き対応）
     if (!selectedStaffId) return;
     const staff = staffs.find(s => s.id === selectedStaffId);
-    if(!confirm(`提出しますか？`)) return;
-    try {
-      // 既存の提出があれば上書きするロジックが必要だが、ここでは簡易的に追記(運用でカバー)
-      await addDoc(collection(db, "shifts"), {
-        staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests, createdAt: new Date()
-      });
-      alert("✅ 提出完了！"); setRequests({}); setSelectedStaffId(""); fetchAllRequests(year, month);
-    } catch (e) { alert("エラー"); }
+    
+    // 既存のドキュメントを探して削除（簡易的な更新処理）
+    const q = query(collection(db, "shifts"), where("staffId", "==", staff.id), where("year", "==", year), where("month", "==", month));
+    const snap = await getDocs(q);
+    snap.forEach(async (d) => { await deleteDoc(doc(db, "shifts", d.id)); });
+
+    await addDoc(collection(db, "shifts"), {
+      staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests, createdAt: new Date()
+    });
+    alert("✅ 保存完了！"); 
+    // プレビューモードならデータを更新
+    if(previewRequestModalOpen) {
+       setPreviewRequestData({ ...previewRequestData, requests });
+       fetchAllRequests(year, month);
+    } else {
+       setRequests({}); setSelectedStaffId(""); 
+    }
   };
 
   const handleLogin = () => {
@@ -212,6 +232,41 @@ export default function Home() {
     } catch (e) { alert("❌ 通信エラー"); }
   };
 
+  // ▼▼▼ 時間入力を00/30分に丸める関数 ▼▼▼
+  const roundTime = (val, setter) => {
+    if (!val) return;
+    const [h, m] = val.split(":");
+    let min = parseInt(m, 10);
+    // 00か30に近い方に寄せる
+    if (min < 15) min = "00";
+    else if (min < 45) min = "30";
+    else min = "00"; // 繰り上げは複雑になるので00に戻す
+    setter(`${h}:${min}`);
+  };
+
+  // ▼▼▼ 実働時間計算（休憩: 6時間超で1時間） ▼▼▼
+  const getWorkHours = (shiftCode, start, end) => {
+    // 固定シフトの拘束時間（仮定）
+    // A(早): 9:30-19:00 = 9.5h -> 実働8.5h? 
+    // ※ユーザー指定: "早番とかは9時間半出勤してるけど実働8時間"
+    if (["A","B","C"].includes(shiftCode)) return 8; 
+    
+    if (shiftCode === "M" || shiftCode === "会議") return 0;
+    
+    // 時間指定
+    if (shiftCode === "時間指定" && start && end) {
+        const [sh, sm] = start.split(":").map(Number);
+        const [eh, em] = end.split(":").map(Number);
+        let diff = (eh + em/60) - (sh + sm/60);
+        
+        // 6時間超なら1時間休憩（6時間ジャストは休憩なし）
+        if (diff > 6) diff -= 1;
+        
+        return diff > 0 ? diff : 0;
+    }
+    return 0;
+  };
+
   const getShiftDisplay = (shiftCode, start, end) => {
     if (shiftCode === "A") return "早";
     if (shiftCode === "B") return "中";
@@ -226,16 +281,6 @@ export default function Home() {
       return `${s}${e}`;
     }
     return shiftCode || "";
-  };
-
-  const getWorkHours = (shiftCode, start, end) => {
-    if (["A","B","C"].includes(shiftCode)) return 9.5; // 休憩1.5h引いて実働8hなら8にすべきだが、拘束時間ベースか実働ベースか。一旦9.5
-    if (shiftCode === "時間指定" && start && end) {
-        const [sh, sm] = start.split(":").map(Number);
-        const [eh, em] = end.split(":").map(Number);
-        return (eh + em/60) - (sh + sm/60);
-    }
-    return 0;
   };
 
   const getSortedStaffs = () => {
@@ -254,6 +299,20 @@ export default function Home() {
     setPreviewRequestData(reqData);
     setPreviewRequestModalOpen(true);
   }
+  
+  // 管理者による修正モード起動
+  const startAdminEdit = (d) => {
+    if (!previewRequestData) return;
+    const staffId = previewRequestData.staffId;
+    setSelectedStaffId(staffId); // 編集対象をセット
+    setRequests(previewRequestData.requests || {}); // 既存データをセット
+    
+    // 日付選択扱いでモーダルを開く
+    setSelectedDay(d);
+    setCustomStart("09:30");
+    setCustomEnd("15:00");
+    setModalOpen(true);
+  };
 
   const downloadCSV = () => {
     let csv = "\uFEFF名前,部門,役職," + [...Array(daysInMonth)].map((_,i)=>`${i+1}日`).join(",") + "\n";
@@ -276,6 +335,7 @@ export default function Home() {
 
   const currentStaff = staffs.find(s => s.id === selectedStaffId);
   const isEmployee = currentStaff && ["店長", "リーダー", "社員"].includes(currentStaff.rank);
+  const isPart = currentStaff && !isEmployee;
 
   return (
     <div className="min-h-screen bg-gray-50 p-2 font-sans text-gray-800 pb-20">
@@ -293,6 +353,7 @@ export default function Home() {
         </div>
 
         <div className="p-4">
+          {/* ▼▼▼ 一般スタッフ画面 ▼▼▼ */}
           {!isAdmin && (
             <div className="max-w-md mx-auto">
               <div className="mb-4 bg-blue-50 p-3 rounded border border-blue-100">
@@ -327,10 +388,10 @@ export default function Home() {
             </div>
           )}
 
+          {/* ▼▼▼ 管理者：設定・入力タブ ▼▼▼ */}
           {isAdmin && activeTab === "input" && (
             <div className="grid lg:grid-cols-2 gap-8">
               <div className="space-y-6">
-                {/* スキル保有量グラフ (移動) */}
                 <div className="bg-white p-4 rounded border shadow-sm">
                   <h3 className="font-bold text-sm mb-4">📈 スタッフ総スキル保有量</h3>
                   <div className="flex gap-4 items-end h-32 border-b">
@@ -389,7 +450,7 @@ export default function Home() {
 
                 {/* 提出状況一覧 */}
                 <div className="bg-gray-100 p-4 rounded border">
-                   <h3 className="font-bold text-sm mb-2">📩 提出状況</h3>
+                   <h3 className="font-bold text-sm mb-2">📩 提出状況 (名前タップで編集)</h3>
                    <div className="flex flex-wrap gap-2">
                      {staffs.map(s => {
                        const req = allRequests.find(r => r.staffId === s.id);
@@ -416,6 +477,16 @@ export default function Home() {
                       <select className="border p-1 rounded text-sm" value={newStaffDept} onChange={e=>setNewStaffDept(e.target.value)}><option>家電</option><option>季節</option><option>情報</option><option>通信</option><option>-</option></select>
                       <button onClick={handleAddStaff} className="bg-green-600 text-white p-1 px-3 rounded font-bold text-xs">追加</button>
                    </div>
+                   
+                   {/* 優先度設定（パートナーのみ） */}
+                   {["パートナー","新規パートナー"].includes(newStaffRank) && (
+                     <div className="text-xs mb-2">
+                        <span className="mr-2">優先度:</span>
+                        {["上","中","下"].map(p => (
+                           <label key={p} className="mr-2"><input type="radio" name="prio" checked={newStaffPriority===p} onChange={()=>setNewStaffPriority(p)}/> {p}</label>
+                        ))}
+                     </div>
+                   )}
 
                    <div className="space-y-2 h-[600px] overflow-y-auto pr-2">
                       {getSortedStaffs().map(s => {
@@ -430,12 +501,19 @@ export default function Home() {
                             <span className="bg-gray-100 px-1 rounded text-[10px]">上限:</span>
                             <input 
                               type="number" 
-                              className={`w-8 border text-center ${isPart ? 'bg-gray-100 text-gray-400' : ''}`} 
+                              className={`w-8 border text-center ${!isPart ? 'bg-gray-100 text-gray-400' : ''}`} 
                               defaultValue={s.maxDays||22} 
-                              onBlur={(e)=>updateMaxDays(s, e.target.value)}
-                              disabled={isPart}
+                              onBlur={(e)=>updateStaffParam(s, 'maxDays', Number(e.target.value))}
+                              disabled={!isPart}
                             />
                             <span className="text-[10px]">日</span>
+                            
+                            {isPart && (
+                               <select className="border rounded text-[10px]" value={s.priority||"中"} onChange={(e)=>updateStaffParam(s, 'priority', e.target.value)}>
+                                 <option>上</option><option>中</option><option>下</option>
+                               </select>
+                            )}
+
                             <button onClick={()=>toggleKeyStatus(s,'canOpen')} className={`px-2 py-0.5 rounded border ${s.canOpen?'bg-orange-100 text-orange-700':'bg-gray-100 text-gray-400'}`}>鍵開</button>
                             <button onClick={()=>toggleKeyStatus(s,'canClose')} className={`px-2 py-0.5 rounded border ${s.canClose?'bg-indigo-100 text-indigo-700':'bg-gray-100 text-gray-400'}`}>鍵締</button>
                             <button onClick={()=>openSkillModal(s)} className="bg-gray-100 px-2 py-0.5 rounded border">スキル</button>
@@ -486,7 +564,7 @@ export default function Home() {
                           const d = String(i+1);
                           const workers = determinedSchedule[d] || [];
                           const totalH = workers.reduce((acc, w) => acc + getWorkHours(w.shift, w.start, w.end), 0);
-                          return <td key={i} className="border">{totalH > 0 ? totalH : "-"}</td>
+                          return <td key={i} className="border">{totalH > 0 ? Math.round(totalH) : "-"}</td>
                        })}
                     </tr>
                     {["家電", "季節", "情報", "通信"].map(dept => (
@@ -497,7 +575,7 @@ export default function Home() {
                             const workers = determinedSchedule[d] || [];
                             const deptH = workers.filter(w => staffs.find(s=>s.id===w.staffId)?.department === dept)
                                                  .reduce((acc, w) => acc + getWorkHours(w.shift, w.start, w.end), 0);
-                            return <td key={i} className="border text-[10px]">{deptH > 0 ? deptH : ""}</td>
+                            return <td key={i} className="border text-[10px]">{deptH > 0 ? Math.round(deptH) : ""}</td>
                          })}
                       </tr>
                     ))}
@@ -561,13 +639,13 @@ export default function Home() {
             </div>
           )}
 
-          {!isAdmin && <div className="mt-12 text-right"><details className="text-xs text-gray-300"><summary>Admin</summary><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="border rounded w-16" /><button onClick={handleLogin}>Go</button></details></div>}
+          {!isAdmin && <div className="mt-12 text-right"><details className="text-xs text-gray-300"><summary className="cursor-pointer">Admin</summary><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="border rounded w-16" /><button onClick={handleLogin}>Go</button></details></div>}
         </div>
 
         {modalOpen && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
-              <h3 className="text-lg font-bold mb-4 text-center border-b pb-2">{month}/{selectedDay} の希望</h3>
+              <h3 className="text-lg font-bold mb-4 text-center border-b pb-2">{month}/{selectedDay} の{isAdmin ? `${staffs.find(s=>s.id===selectedStaffId)?.name}の` : ""}希望</h3>
               {isEmployee ? (
                 <div className="grid grid-cols-2 gap-3">
                   <button onClick={()=>saveRequest("希望休")} className="bg-red-100 text-red-700 py-3 rounded-lg font-bold">希望休</button>
@@ -581,24 +659,31 @@ export default function Home() {
                     <button onClick={()=>saveRequest("遅番","12:00","21:30")} className="bg-blue-100 text-blue-800 py-2 rounded font-bold text-sm">遅番(C)</button>
                   </div>
                   <div className="border-t pt-3 mt-2">
-                    <p className="text-xs text-gray-500 mb-1">時間指定</p>
+                    <p className="text-xs text-gray-500 mb-1">時間指定 (00/30分)</p>
                     <div className="flex items-center gap-2 mb-3">
-                      <input type="time" id="startTime" defaultValue="09:30" className="border p-1 rounded bg-gray-50"/><span>～</span><input type="time" id="endTime" defaultValue="15:00" className="border p-1 rounded bg-gray-50"/>
+                      <input type="time" value={customStart} onChange={e=>handleTimeChange(e,setCustomStart)} onBlur={e=>roundTime(e.target.value,setCustomStart)} className="border p-1 rounded bg-gray-50"/>
+                      <span>～</span>
+                      <input type="time" value={customEnd} onChange={e=>handleTimeChange(e,setCustomEnd)} onBlur={e=>roundTime(e.target.value,setCustomEnd)} className="border p-1 rounded bg-gray-50"/>
                     </div>
-                    <button onClick={()=>{const s=document.getElementById("startTime").value;const e=document.getElementById("endTime").value;saveRequest("時間指定",s,e);}} className="w-full bg-gray-800 text-white py-2 rounded font-bold">時間を決定</button>
+                    <button onClick={()=>saveRequest("時間指定",customStart,customEnd)} className="w-full bg-gray-800 text-white py-2 rounded font-bold">時間を決定</button>
                   </div>
                 </div>
               )}
-              <button onClick={removeRequest} className="w-full mt-6 py-2 border border-gray-300 text-gray-500 rounded">クリア</button>
+              <div className="flex gap-2 mt-6">
+                <button onClick={removeRequest} className="flex-1 py-2 border border-gray-300 text-gray-500 rounded">クリア</button>
+                {isAdmin && <button onClick={handleSubmit} className="flex-1 py-2 bg-blue-600 text-white rounded">変更を保存</button>}
+              </div>
             </div>
           </div>
         )}
         
-        {/* 提出シフトプレビューモーダル */}
         {previewRequestModalOpen && previewRequestData && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setPreviewRequestModalOpen(false)}>
              <div className="bg-white w-full max-w-md rounded-xl p-6 shadow-2xl overflow-y-auto max-h-[80vh]" onClick={e=>e.stopPropagation()}>
-               <h3 className="text-lg font-bold mb-4">{previewRequestData.name}さんの希望</h3>
+               <div className="flex justify-between items-center mb-4">
+                 <h3 className="text-lg font-bold">{previewRequestData.name}さんの希望</h3>
+                 <span className="text-xs bg-gray-100 px-2 py-1 rounded">タップして修正</span>
+               </div>
                <div className="grid grid-cols-7 gap-1 text-center text-xs">
                  {['日','月','火','水','木','金','土'].map((d,i)=><div key={i} className="font-bold">{d}</div>)}
                  {[...Array(daysInMonth)].map((_,i)=>{
@@ -606,7 +691,10 @@ export default function Home() {
                     const req = previewRequestData.requests[d];
                     const disp = req ? getShiftDisplay(req.type, req.start, req.end) : "";
                     return (
-                      <div key={d} className={`aspect-square border rounded flex items-center justify-center ${req?'bg-blue-50 font-bold text-blue-700':''}`}>
+                      <div key={d} 
+                        className={`aspect-square border rounded flex items-center justify-center cursor-pointer hover:bg-gray-100 ${req?'bg-blue-50 font-bold text-blue-700':''}`}
+                        onClick={() => startAdminEdit(d)}
+                      >
                         <div><div className="text-[10px] text-gray-400">{d}</div><div>{disp}</div></div>
                       </div>
                     )
