@@ -140,8 +140,6 @@ class handler(BaseHTTPRequestHandler):
                     problem += pulp.lpSum([x[d, s, "C"] for s in closers]) >= 1
 
                 # 7. 開け・締め人数 (時間指定含む)
-                
-                # Open人数 (9:30-10:00にいる人)
                 count_open_vars = []
                 count_close_vars = []
                 
@@ -149,12 +147,10 @@ class handler(BaseHTTPRequestHandler):
                     req = request_map[d].get(s, {})
                     
                     if req.get("type") == "時間指定":
-                        # 時間指定の人: 開始時間が10:00以下ならOpen要員
                         sh = int(req.get("start", "00:00").split(":")[0])
                         if sh <= 10:
                             count_open_vars.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
                         
-                        # 終了時間が21:30以上ならClose要員
                         eh_str = req.get("end", "00:00")
                         eh = int(eh_str.split(":")[0])
                         em = int(eh_str.split(":")[1])
@@ -162,7 +158,6 @@ class handler(BaseHTTPRequestHandler):
                              count_close_vars.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
                     
                     else:
-                        # 通常の人
                         count_open_vars.append(x[d, s, "A"]) 
                         count_close_vars.append(x[d, s, "C"]) 
                 
@@ -214,31 +209,37 @@ class handler(BaseHTTPRequestHandler):
                         problem += pulp.lpSum([x[d, s, st] for st in shift_types]) == 0
                     elif r_type == "希望休":
                         problem += pulp.lpSum([x[d, s, st] for st in shift_types]) == 0
+                    elif r_type == "フリー":
+                        # A or B or C どれか1つ
+                        problem += pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) == 1
                     elif r_type in ["早番", "中番", "遅番"]:
                         target = "A" if r_type=="早番" else "B" if r_type=="中番" else "C"
                         problem += x[d, s, target] == 1
                     elif r_type == "時間指定":
                         problem += pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) == 1
 
-            # --- 4. 目的関数 ---
+            # --- 4. 目的関数 (優先度 + 早番優先) ---
             obj_vars = []
+            
+            # 早番優先バイアス
+            shift_bias = {"A": 1.1, "B": 1.05, "C": 1.0}
+
             for d in days:
                 for s in staff_ids:
                     rank_id = staffs[s].get("rankId", 99)
                     
                     # 基本重み
                     if rank_id <= 3:
-                        # 社員は最優先 (P1相当)
                         weight = 100.0
                     else:
-                        # パートナーは設定値に従う
                         p = str(staffs[s].get("priority", "2"))
                         if p == "1": weight = 100.0
                         elif p == "3": weight = 10.0
-                        else: weight = 50.0 # P2 (Default)
+                        else: weight = 50.0 
 
                     for st in ["A","B","C"]:
-                        obj_vars.append(x[d, s, st] * weight)
+                        bias = shift_bias.get(st, 1.0)
+                        obj_vars.append(x[d, s, st] * weight * bias)
             
             problem += pulp.lpSum(obj_vars)
 
