@@ -119,7 +119,7 @@ class handler(BaseHTTPRequestHandler):
                 total_work_slots = pulp.lpSum([x[d, s, st] for s in staff_ids for st in ["A","B","C"]])
                 problem += total_work_slots * 8 <= limit_hours
 
-                # 4. 部門最低人数 -> ハード制約削除 (0人でもOK)
+                # 4. 部門最低人数 -> 緩和
 
                 # 5. スキル要件
                 for skill_name, min_val in min_skills.items():
@@ -130,7 +130,7 @@ class handler(BaseHTTPRequestHandler):
                         ])
                         problem += current_skill_sum >= min_val
 
-                # 6. 鍵 (Open/Close)
+                # 6. 鍵
                 openers = [s for s in staff_ids if staffs[s].get("canOpen") == True]
                 if openers:
                     problem += pulp.lpSum([x[d, s, "A"] for s in openers]) >= 1
@@ -141,32 +141,7 @@ class handler(BaseHTTPRequestHandler):
 
                 # 7. 開け・締め人数 (時間指定含む)
                 
-                # 開け人数 (9:30-10:00にいる人)
-                # Aシフト(9:30~) + 開始時間が10:00以下の時間指定
-                open_vars = []
-                for s in staff_ids:
-                    # Aシフトなら確実にいる
-                    open_vars.append(x[d, s, "A"])
-                    
-                    # 時間指定の場合
-                    req = request_map[d].get(s, {})
-                    if req.get("type") == "時間指定":
-                         # 時間指定リクエストがある場合、もしA/B/Cどれかに入れば、それは時間指定シフトとして扱われる
-                         # 開始時間が10:00以下かチェック
-                         start_str = req.get("start", "00:00")
-                         sh = int(start_str.split(":")[0])
-                         if sh <= 9 or (sh == 10 and int(start_str.split(":")[1]) == 0):
-                             # 10:00以前に出勤するならカウント
-                             # A/B/Cのどれかに入ったらカウントする（重複しないようAは除く...いや、時間指定の人はAに入らないはずだが変数上はA/B/C）
-                             # ここでは厳密に「時間指定リクエストがある人は、A/B/Cいずれかが1ならカウント」とする
-                             # ただし、上でx[d,s,"A"]を足しているので、二重カウントに注意。
-                             # 簡易的に: 時間指定リクエストがある人の x[d,s,A] は上の行で足されてしまう。
-                             # なので、時間指定の人は個別対応が必要。
-                             
-                             # ロジック修正: 全員についてループ
-                             pass
-                
-                # パルプの変数リストを再構築
+                # Open人数 (9:30-10:00にいる人)
                 count_open_vars = []
                 count_close_vars = []
                 
@@ -188,8 +163,8 @@ class handler(BaseHTTPRequestHandler):
                     
                     else:
                         # 通常の人
-                        count_open_vars.append(x[d, s, "A"]) # AのみOpen
-                        count_close_vars.append(x[d, s, "C"]) # CのみClose (Bは20:30までなので対象外)
+                        count_open_vars.append(x[d, s, "A"]) 
+                        count_close_vars.append(x[d, s, "C"]) 
                 
                 problem += pulp.lpSum(count_open_vars) >= min_staff_counts.get("open", 3)
                 problem += pulp.lpSum(count_close_vars) >= min_staff_counts.get("close", 3)
@@ -249,11 +224,19 @@ class handler(BaseHTTPRequestHandler):
             obj_vars = []
             for d in days:
                 for s in staff_ids:
-                    p = str(staffs[s].get("priority", "2"))
-                    weight = 1.0
-                    if p == "1": weight = 2.0
-                    elif p == "3": weight = 0.5
+                    rank_id = staffs[s].get("rankId", 99)
                     
+                    # 基本重み
+                    if rank_id <= 3:
+                        # 社員は最優先 (P1相当)
+                        weight = 100.0
+                    else:
+                        # パートナーは設定値に従う
+                        p = str(staffs[s].get("priority", "2"))
+                        if p == "1": weight = 100.0
+                        elif p == "3": weight = 10.0
+                        else: weight = 50.0 # P2 (Default)
+
                     for st in ["A","B","C"]:
                         obj_vars.append(x[d, s, st] * weight)
             

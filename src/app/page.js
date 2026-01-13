@@ -59,22 +59,19 @@ export default function Home() {
     fridge: "冷蔵庫", washing: "洗濯機", ac: "エアコン", tv: "TV", mobile: "携帯", pc: "PC"
   };
 
-  // --- ▼▼▼ 日付切り替えロジックの変更 ▼▼▼ ---
-  // isAdmin が変わるたびに、あるいは初回に実行
+  // --- ▼▼▼ 日付切り替えロジック ▼▼▼ ---
   useEffect(() => {
     const today = new Date();
     let targetY = today.getFullYear();
-    let targetM = today.getMonth() + 1; // JSの月は0始まりなので+1
+    let targetM = today.getMonth() + 1; 
 
     if (isAdmin) {
       // 【管理者】毎月10日に「翌月」へ
-      // 今日が10日以上なら翌月、そうでなければ当月
       if (today.getDate() >= 10) {
         targetM += 1;
       }
     } else {
       // 【提出側】毎月25日に「翌々月」へ
-      // 基本は翌月提出。25日を過ぎたら翌々月提出
       if (today.getDate() >= 25) {
         targetM += 2;
       } else {
@@ -82,7 +79,7 @@ export default function Home() {
       }
     }
 
-    // 年またぎの計算 (例: 12月の翌月=13月 -> 翌年1月)
+    // 年またぎ計算
     const dateObj = new Date(targetY, targetM - 1, 1);
     const finalYear = dateObj.getFullYear();
     const finalMonth = dateObj.getMonth() + 1;
@@ -91,9 +88,8 @@ export default function Home() {
     setMonth(finalMonth);
     setDaysInMonth(new Date(finalYear, finalMonth, 0).getDate());
 
-  }, [isAdmin]); // 管理者モード切り替え時に再計算
+  }, [isAdmin]);
 
-  // 年・月が確定したらデータを再取得
   useEffect(() => {
     if (year === 0 || month === 0) return;
     fetchConfig(year, month);
@@ -101,7 +97,6 @@ export default function Home() {
     fetchAllRequests(year, month);
   }, [year, month]);
 
-  // スタッフリストは年月関係ないので初回のみ
   useEffect(() => {
     fetchStaffs();
   }, []);
@@ -129,7 +124,6 @@ export default function Home() {
         setMinStaffCounts(data.minStaffCounts || { open: 3, close: 3 });
         setMeetingSchedule(data.meetings || {});
       } else {
-        // データがない月の場合、初期値をセット
         setDailySales({});
         setConfigCaps({ salesLow: 100, hoursLow: 70, salesHigh: 500, hoursHigh: 100 });
         setMinSkills({ fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 });
@@ -177,7 +171,7 @@ export default function Home() {
       await addDoc(collection(db, "staffs"), { 
         name: newStaffName, rank: newStaffRank, rankId: rankMap[newStaffRank] || 99,
         department: newStaffDept, maxDays: Number(newStaffMaxDays),
-        priority: newStaffPriority, // 1, 2, 3
+        priority: newStaffPriority, 
         canOpen: false, canClose: false,
         skills: { fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 }
       });
@@ -558,15 +552,6 @@ export default function Home() {
                       <button onClick={handleAddStaff} className="bg-green-600 text-white p-1 px-3 rounded font-bold text-xs">追加</button>
                    </div>
                    
-                   {["パートナー","新規パートナー"].includes(newStaffRank) && (
-                     <div className="text-xs mb-2">
-                        <span className="mr-2">優先度:</span>
-                        {["1","2","3"].map(p => (
-                           <label key={p} className="mr-2"><input type="radio" name="prio" checked={newStaffPriority===p} onChange={()=>setNewStaffPriority(p)}/> {p}</label>
-                        ))}
-                     </div>
-                   )}
-
                    <div className="space-y-2 h-[600px] overflow-y-auto pr-2">
                       {getSortedStaffs().map(s => {
                         const isPart = ["パートナー", "新規パートナー"].includes(s.rank);
@@ -578,6 +563,12 @@ export default function Home() {
                                <select className="text-xs border rounded p-0.5" value={s.rank} onChange={(e)=>updateStaffParam(s,'rank',e.target.value)}>
                                  <option>店長</option><option>リーダー</option><option>社員</option><option>パートナー</option><option>新規パートナー</option>
                                </select>
+                               {/* 優先度（部門の左ではなく、要望通り部門の右に配置） */}
+                               {isPart && (
+                                 <select className="text-xs border rounded p-0.5 text-blue-700 font-bold bg-blue-50" value={s.priority||"2"} onChange={(e)=>updateStaffParam(s, 'priority', e.target.value)} title="優先度(1:高 2:普 3:低)">
+                                   <option value="1">P:1</option><option value="2">P:2</option><option value="3">P:3</option>
+                                 </select>
+                               )}
                                <select className="text-xs border rounded p-0.5" value={s.department} onChange={(e)=>updateStaffParam(s,'department',e.target.value)}>
                                  <option>家電</option><option>季節</option><option>情報</option><option>通信</option><option>-</option>
                                </select>
@@ -596,15 +587,6 @@ export default function Home() {
                             <button onClick={()=>toggleKeyStatus(s,'canOpen')} className={`px-2 py-0.5 rounded border ${s.canOpen?'bg-orange-100 text-orange-700':'bg-gray-100 text-gray-400'}`}>鍵開</button>
                             <button onClick={()=>toggleKeyStatus(s,'canClose')} className={`px-2 py-0.5 rounded border ${s.canClose?'bg-indigo-100 text-indigo-700':'bg-gray-100 text-gray-400'}`}>鍵締</button>
                             <button onClick={()=>openSkillModal(s)} className="bg-gray-100 px-2 py-0.5 rounded border">スキル</button>
-                            
-                            {isPart && (
-                               <div className="ml-auto flex items-center gap-1">
-                                 <span className="text-gray-400 text-[10px]">優先度:</span>
-                                 <select className="border rounded text-[10px]" value={s.priority||"2"} onChange={(e)=>updateStaffParam(s, 'priority', e.target.value)}>
-                                   <option value="1">1</option><option value="2">2</option><option value="3">3</option>
-                                 </select>
-                               </div>
-                            )}
                           </div>
                           <div className="mt-2 pt-1 border-t flex flex-wrap gap-1">
                              <span className="text-gray-400">会議:</span>
@@ -728,6 +710,7 @@ export default function Home() {
           {!isAdmin && <div className="mt-12 text-right"><details className="text-xs text-gray-300"><summary className="cursor-pointer">Admin</summary><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="border rounded w-16" /><button onClick={handleLogin}>Go</button></details></div>}
         </div>
 
+        {/* モーダル類 (z-index 60に修正) */}
         {modalOpen && (
           <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={()=>setModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
