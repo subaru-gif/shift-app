@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { db } from "../lib/firebase";
-import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc, query, orderBy, setDoc, getDoc } from "firebase/firestore";
+import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc, query, orderBy, setDoc, getDoc, where } from "firebase/firestore";
 
 export default function Home() {
   const [isAdmin, setIsAdmin] = useState(false);
@@ -9,17 +9,18 @@ export default function Home() {
   const [year, setYear] = useState(0);
   const [month, setMonth] = useState(0);
   const [daysInMonth, setDaysInMonth] = useState(30);
-  const [activeTab, setActiveTab] = useState("input"); // input | shift
+  const [activeTab, setActiveTab] = useState("input");
 
   // ▼ データ
   const [staffs, setStaffs] = useState([]);
   const [selectedStaffId, setSelectedStaffId] = useState("");
-  const [requests, setRequests] = useState({});
+  const [requests, setRequests] = useState({}); // 自分の提出用
+  const [allRequests, setAllRequests] = useState([]); // 管理者用：全員の提出データ
   const [dailySales, setDailySales] = useState({});
   const [determinedSchedule, setDeterminedSchedule] = useState({});
   const [meetingSchedule, setMeetingSchedule] = useState({}); 
 
-  // ▼ 設定（キャップ・スキル）
+  // ▼ 設定
   const [configCaps, setConfigCaps] = useState({
     salesLow: 100, hoursLow: 70,
     salesHigh: 500, hoursHigh: 100
@@ -33,12 +34,18 @@ export default function Home() {
   const [modalOpen, setModalOpen] = useState(false);
   const [skillModalOpen, setSkillModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState(null);
+  const [previewRequestModalOpen, setPreviewRequestModalOpen] = useState(false);
+  const [previewRequestData, setPreviewRequestData] = useState(null); // { name: "...", requests: {} }
   
   // ▼ 新規登録用
   const [newStaffName, setNewStaffName] = useState("");
   const [newStaffRank, setNewStaffRank] = useState("パートナー");
   const [newStaffDept, setNewStaffDept] = useState("家電");
   const [newStaffMaxDays, setNewStaffMaxDays] = useState(22);
+
+  const skillLabelMap = {
+    fridge: "冷蔵庫", washing: "洗濯機", ac: "エアコン", tv: "TV", mobile: "携帯", pc: "PC"
+  };
 
   useEffect(() => {
     const targetDate = new Date();
@@ -53,6 +60,7 @@ export default function Home() {
     fetchStaffs();
     fetchConfig(y, m);
     fetchDeterminedShift(y, m);
+    fetchAllRequests(y, m);
   }, []);
 
   const fetchStaffs = async () => {
@@ -87,15 +95,21 @@ export default function Home() {
     } catch (e) { console.log("Determined shift fetch error"); }
   };
 
+  const fetchAllRequests = async (y, m) => {
+    try {
+      const q = query(collection(db, "shifts"), where("year", "==", y), where("month", "==", m));
+      const snap = await getDocs(q);
+      const list = [];
+      snap.forEach(doc => list.push(doc.data()));
+      setAllRequests(list);
+    } catch (e) { console.log("Requests fetch error"); }
+  }
+
   const saveConfig = async () => {
     const docId = `${year}-${month}`;
     try {
       await setDoc(doc(db, "monthlyConfig", docId), { 
-        dailySales, 
-        caps: configCaps,
-        minSkills,
-        meetings: meetingSchedule,
-        updatedAt: new Date() 
+        dailySales, caps: configCaps, minSkills, meetings: meetingSchedule, updatedAt: new Date() 
       }, { merge: true });
       alert("設定を保存しました");
     } catch (e) { alert("保存失敗"); }
@@ -161,14 +175,14 @@ export default function Home() {
     const staff = staffs.find(s => s.id === selectedStaffId);
     if(!confirm(`提出しますか？`)) return;
     try {
+      // 既存の提出があれば上書きするロジックが必要だが、ここでは簡易的に追記(運用でカバー)
       await addDoc(collection(db, "shifts"), {
         staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests, createdAt: new Date()
       });
-      alert("✅ 提出完了！"); setRequests({}); setSelectedStaffId("");
+      alert("✅ 提出完了！"); setRequests({}); setSelectedStaffId(""); fetchAllRequests(year, month);
     } catch (e) { alert("エラー"); }
   };
 
-  // ★★★ 追加したログイン関数 ★★★
   const handleLogin = () => {
     if (password === "333191") setIsAdmin(true); else alert("パスワードが違います");
   };
@@ -205,12 +219,23 @@ export default function Home() {
     if (shiftCode === "M") return "議";
     if (shiftCode === "会議") return "議";
     if (shiftCode === "有給") return "有";
-    if (shiftCode === "時間指定" && start && end) {
+    if (shiftCode === "希望休") return "希";
+    if ((shiftCode === "時間指定" || !["A","B","C","M","会議","有給","希望休"].includes(shiftCode)) && start && end) {
       const s = start.split(":")[0];
       const e = end.split(":")[0];
       return `${s}${e}`;
     }
     return shiftCode || "";
+  };
+
+  const getWorkHours = (shiftCode, start, end) => {
+    if (["A","B","C"].includes(shiftCode)) return 9.5; // 休憩1.5h引いて実働8hなら8にすべきだが、拘束時間ベースか実働ベースか。一旦9.5
+    if (shiftCode === "時間指定" && start && end) {
+        const [sh, sm] = start.split(":").map(Number);
+        const [eh, em] = end.split(":").map(Number);
+        return (eh + em/60) - (sh + sm/60);
+    }
+    return 0;
   };
 
   const getSortedStaffs = () => {
@@ -224,6 +249,11 @@ export default function Home() {
       return a.rankId - b.rankId;
     });
   };
+
+  const openPreview = (reqData) => {
+    setPreviewRequestData(reqData);
+    setPreviewRequestModalOpen(true);
+  }
 
   const downloadCSV = () => {
     let csv = "\uFEFF名前,部門,役職," + [...Array(daysInMonth)].map((_,i)=>`${i+1}日`).join(",") + "\n";
@@ -249,7 +279,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-2 font-sans text-gray-800 pb-20">
-      <div className="max-w-7xl mx-auto bg-white shadow-xl rounded-xl overflow-hidden">
+      <div className="max-w-[1400px] mx-auto bg-white shadow-xl rounded-xl overflow-hidden">
         
         <div className="bg-blue-700 p-4 text-white flex justify-between items-center sticky top-0 z-20 shadow">
           <h1 className="text-xl font-bold">{year}年{month}月 シフト{isAdmin ? "管理" : "提出"}</h1>
@@ -300,9 +330,26 @@ export default function Home() {
           {isAdmin && activeTab === "input" && (
             <div className="grid lg:grid-cols-2 gap-8">
               <div className="space-y-6">
+                {/* スキル保有量グラフ (移動) */}
+                <div className="bg-white p-4 rounded border shadow-sm">
+                  <h3 className="font-bold text-sm mb-4">📈 スタッフ総スキル保有量</h3>
+                  <div className="flex gap-4 items-end h-32 border-b">
+                     {Object.keys(minSkills).map(k => {
+                       const total = staffs.reduce((acc, s) => acc + (s.skills?.[k]||0), 0);
+                       return (
+                         <div key={k} className="flex-1 flex flex-col items-center gap-1 group">
+                           <span className="text-xs font-bold">{total}</span>
+                           <div className="w-full bg-blue-200 rounded-t hover:bg-blue-300 transition-all" style={{height: `${Math.min(total*2, 100)}px`}}></div>
+                           <span className="text-[10px] text-gray-500">{skillLabelMap[k]}</span>
+                         </div>
+                       )
+                     })}
+                  </div>
+                </div>
+
                 <div className="bg-yellow-50 p-4 rounded border border-yellow-200 shadow-sm">
                   <div className="flex justify-between items-center mb-3">
-                    <h3 className="font-bold text-sm text-yellow-800">💰 売上・労働時間キャップ設定</h3>
+                    <h3 className="font-bold text-sm text-yellow-800">💰 売上・労働時間キャップ</h3>
                     <button onClick={saveConfig} className="bg-yellow-600 text-white px-3 py-1 rounded text-xs font-bold">保存</button>
                   </div>
                   <div className="text-xs space-y-2 mb-4">
@@ -320,7 +367,10 @@ export default function Home() {
                   <div className="grid grid-cols-7 gap-1 text-center text-xs">
                      {['日','月','火','水','木','金','土'].map((d,i) => (<div key={i} className="font-bold text-gray-400">{d}</div>))}
                      {[...Array(daysInMonth)].map((_, i) => (
-                        <div key={i+1}><input type="number" className="w-full text-center border rounded focus:outline-none focus:border-yellow-500" placeholder="0" value={dailySales[i+1]||""} onChange={(e)=>handleSalesChange(i+1, e.target.value)} /></div>
+                        <div key={i+1}>
+                          <span className="block text-[9px] text-gray-400">{i+1}日</span>
+                          <input type="number" className="w-full text-center border rounded focus:outline-none focus:border-yellow-500" placeholder="0" value={dailySales[i+1]||""} onChange={(e)=>handleSalesChange(i+1, e.target.value)} />
+                        </div>
                      ))}
                   </div>
                 </div>
@@ -330,11 +380,29 @@ export default function Home() {
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     {Object.keys(minSkills).map(key => (
                       <div key={key} className="flex justify-between items-center bg-white p-2 rounded border">
-                        <span className="capitalize">{key}</span>
+                        <span>{skillLabelMap[key]}</span>
                         <input type="number" className="w-12 border rounded text-center" value={minSkills[key]} onChange={(e)=>setMinSkills({...minSkills, [key]: Number(e.target.value)})} />
                       </div>
                     ))}
                   </div>
+                </div>
+
+                {/* 提出状況一覧 */}
+                <div className="bg-gray-100 p-4 rounded border">
+                   <h3 className="font-bold text-sm mb-2">📩 提出状況</h3>
+                   <div className="flex flex-wrap gap-2">
+                     {staffs.map(s => {
+                       const req = allRequests.find(r => r.staffId === s.id);
+                       return (
+                         <button key={s.id} 
+                           onClick={() => req && openPreview(req)}
+                           className={`px-3 py-1 rounded text-xs border ${req ? 'bg-blue-100 text-blue-800 border-blue-300 font-bold' : 'bg-white text-gray-400'}`}
+                         >
+                           {s.name}
+                         </button>
+                       )
+                     })}
+                   </div>
                 </div>
               </div>
 
@@ -349,16 +417,25 @@ export default function Home() {
                       <button onClick={handleAddStaff} className="bg-green-600 text-white p-1 px-3 rounded font-bold text-xs">追加</button>
                    </div>
 
-                   <div className="space-y-2 h-[500px] overflow-y-auto pr-2">
-                      {getSortedStaffs().map(s => (
+                   <div className="space-y-2 h-[600px] overflow-y-auto pr-2">
+                      {getSortedStaffs().map(s => {
+                        const isPart = ["パートナー", "新規パートナー"].includes(s.rank);
+                        return (
                         <div key={s.id} className="bg-white p-2 border rounded text-xs">
                           <div className="flex justify-between items-center mb-1">
                             <span className="font-bold text-sm">{s.name} <span className="text-gray-500 font-normal">({s.rank}/{s.department})</span></span>
                             <button onClick={()=>deleteDoc(doc(db,"staffs",s.id)).then(fetchStaffs)} className="text-red-400 hover:text-red-600">削除</button>
                           </div>
                           <div className="flex flex-wrap gap-2 items-center">
-                            <span className="bg-gray-100 px-1 rounded">上限:{s.maxDays||22}日</span>
-                            <input type="number" className="w-8 border text-center" defaultValue={s.maxDays||22} onBlur={(e)=>updateMaxDays(s, e.target.value)} />
+                            <span className="bg-gray-100 px-1 rounded text-[10px]">上限:</span>
+                            <input 
+                              type="number" 
+                              className={`w-8 border text-center ${isPart ? 'bg-gray-100 text-gray-400' : ''}`} 
+                              defaultValue={s.maxDays||22} 
+                              onBlur={(e)=>updateMaxDays(s, e.target.value)}
+                              disabled={isPart}
+                            />
+                            <span className="text-[10px]">日</span>
                             <button onClick={()=>toggleKeyStatus(s,'canOpen')} className={`px-2 py-0.5 rounded border ${s.canOpen?'bg-orange-100 text-orange-700':'bg-gray-100 text-gray-400'}`}>鍵開</button>
                             <button onClick={()=>toggleKeyStatus(s,'canClose')} className={`px-2 py-0.5 rounded border ${s.canClose?'bg-indigo-100 text-indigo-700':'bg-gray-100 text-gray-400'}`}>鍵締</button>
                             <button onClick={()=>openSkillModal(s)} className="bg-gray-100 px-2 py-0.5 rounded border">スキル</button>
@@ -376,7 +453,7 @@ export default function Home() {
                              })}
                           </div>
                         </div>
-                      ))}
+                      )})}
                    </div>
                 </div>
               </div>
@@ -399,14 +476,41 @@ export default function Home() {
                 <table className="min-w-full text-xs text-center border-collapse">
                   <thead>
                     <tr className="bg-gray-100 text-gray-600">
-                      <th className="p-2 border whitespace-nowrap sticky left-0 bg-gray-100 z-10">名前</th>
+                      <th className="p-2 border whitespace-nowrap sticky left-0 bg-gray-100 z-10">項目 / 日付</th>
                       {[...Array(daysInMonth)].map((_, i) => (<th key={i} className={`p-1 border min-w-[24px] ${i%7===0?'text-red-500':(i+1)%7===0?'text-blue-500':''}`}>{i+1}</th>))}
                     </tr>
+                    {/* 上部集計行 */}
+                    <tr className="bg-blue-50 font-bold">
+                       <td className="p-1 border sticky left-0 bg-blue-50 text-left">総労働時間</td>
+                       {[...Array(daysInMonth)].map((_, i) => {
+                          const d = String(i+1);
+                          const workers = determinedSchedule[d] || [];
+                          const totalH = workers.reduce((acc, w) => acc + getWorkHours(w.shift, w.start, w.end), 0);
+                          return <td key={i} className="border">{totalH > 0 ? totalH : "-"}</td>
+                       })}
+                    </tr>
+                    {["家電", "季節", "情報", "通信"].map(dept => (
+                      <tr key={dept} className="bg-gray-50 text-gray-500">
+                         <td className="p-1 border sticky left-0 bg-gray-50 text-left text-[10px]">{dept}時間</td>
+                         {[...Array(daysInMonth)].map((_, i) => {
+                            const d = String(i+1);
+                            const workers = determinedSchedule[d] || [];
+                            const deptH = workers.filter(w => staffs.find(s=>s.id===w.staffId)?.department === dept)
+                                                 .reduce((acc, w) => acc + getWorkHours(w.shift, w.start, w.end), 0);
+                            return <td key={i} className="border text-[10px]">{deptH > 0 ? deptH : ""}</td>
+                         })}
+                      </tr>
+                    ))}
                   </thead>
                   <tbody>
                     {getSortedStaffs().map((s) => (
                       <tr key={s.id} className="hover:bg-gray-50">
-                        <td className="p-2 border font-bold text-left whitespace-nowrap sticky left-0 bg-white z-10">{s.name} <span className="text-[9px] text-gray-400">({s.rank.substr(0,2)})</span></td>
+                        <td className="p-2 border font-bold text-left whitespace-nowrap sticky left-0 bg-white z-10">
+                           {s.name} 
+                           <span className="text-[9px] text-gray-400 ml-1">
+                             ({s.rank==="新規パートナー"?"新人":s.rank})
+                           </span>
+                        </td>
                         {[...Array(daysInMonth)].map((_, i) => {
                            const d = String(i+1);
                            const shift = (determinedSchedule[d] || []).find(x => x.staffId === s.id);
@@ -423,8 +527,9 @@ export default function Home() {
                         })}
                       </tr>
                     ))}
-                    <tr className="bg-gray-50 font-bold border-t-2">
-                       <td className="p-2 border sticky left-0 bg-gray-50">日別スキル充足</td>
+                    {/* 下部集計行 */}
+                    <tr className="bg-gray-100 font-bold border-t-2">
+                       <td className="p-2 border sticky left-0 bg-gray-100">日別スキル充足</td>
                        {[...Array(daysInMonth)].map((_, i) => {
                           const d = String(i+1);
                           const workers = determinedSchedule[d] || [];
@@ -435,32 +540,28 @@ export default function Home() {
                               if(sum < minSkills[k]) isLack = true;
                             }
                           });
-                          return <td key={i} className={`border ${isLack ? 'bg-red-200 text-red-800' : 'text-gray-400'}`}>{isLack?'⚠':'OK'}</td>
+                          return <td key={i} className={`border ${isLack ? 'bg-red-200 text-red-800' : 'text-green-600'}`}>{isLack?'⚠':'OK'}</td>
                        })}
                     </tr>
+                    {Object.keys(minSkills).map(k => (
+                      <tr key={k} className="text-xs text-gray-500">
+                        <td className="p-1 border sticky left-0 bg-white text-left">{skillLabelMap[k]} ({minSkills[k]})</td>
+                        {[...Array(daysInMonth)].map((_, i) => {
+                           const d = String(i+1);
+                           const workers = determinedSchedule[d] || [];
+                           const sum = workers.reduce((acc, w) => acc + (staffs.find(s=>s.id===w.staffId)?.skills?.[k] || 0), 0);
+                           const isLack = minSkills[k] > 0 && sum < minSkills[k];
+                           return <td key={i} className={`border ${isLack ? 'text-red-500 font-bold' : ''}`}>{sum}</td>
+                        })}
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
-              </div>
-
-              <div className="bg-white p-4 rounded border shadow-sm">
-                <h3 className="font-bold text-sm mb-4">📈 スタッフ総スキル保有量</h3>
-                <div className="flex gap-4 items-end h-32 border-b">
-                   {Object.keys(minSkills).map(k => {
-                     const total = staffs.reduce((acc, s) => acc + (s.skills?.[k]||0), 0);
-                     return (
-                       <div key={k} className="flex-1 flex flex-col items-center gap-1 group">
-                         <span className="text-xs font-bold">{total}</span>
-                         <div className="w-full bg-blue-200 rounded-t hover:bg-blue-300 transition-all" style={{height: `${Math.min(total*2, 100)}px`}}></div>
-                         <span className="text-[10px] uppercase text-gray-500">{k}</span>
-                       </div>
-                     )
-                   })}
-                </div>
               </div>
             </div>
           )}
 
-          {!isAdmin && <div className="mt-12 text-right"><details className="text-xs text-gray-300"><summary className="cursor-pointer">Admin</summary><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="border rounded w-16" /><button onClick={handleLogin}>Go</button></details></div>}
+          {!isAdmin && <div className="mt-12 text-right"><details className="text-xs text-gray-300"><summary>Admin</summary><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="border rounded w-16" /><button onClick={handleLogin}>Go</button></details></div>}
         </div>
 
         {modalOpen && (
@@ -493,6 +594,29 @@ export default function Home() {
           </div>
         )}
         
+        {/* 提出シフトプレビューモーダル */}
+        {previewRequestModalOpen && previewRequestData && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setPreviewRequestModalOpen(false)}>
+             <div className="bg-white w-full max-w-md rounded-xl p-6 shadow-2xl overflow-y-auto max-h-[80vh]" onClick={e=>e.stopPropagation()}>
+               <h3 className="text-lg font-bold mb-4">{previewRequestData.name}さんの希望</h3>
+               <div className="grid grid-cols-7 gap-1 text-center text-xs">
+                 {['日','月','火','水','木','金','土'].map((d,i)=><div key={i} className="font-bold">{d}</div>)}
+                 {[...Array(daysInMonth)].map((_,i)=>{
+                    const d = i+1;
+                    const req = previewRequestData.requests[d];
+                    const disp = req ? getShiftDisplay(req.type, req.start, req.end) : "";
+                    return (
+                      <div key={d} className={`aspect-square border rounded flex items-center justify-center ${req?'bg-blue-50 font-bold text-blue-700':''}`}>
+                        <div><div className="text-[10px] text-gray-400">{d}</div><div>{disp}</div></div>
+                      </div>
+                    )
+                 })}
+               </div>
+               <button onClick={()=>setPreviewRequestModalOpen(false)} className="w-full mt-4 py-2 bg-gray-200 rounded">閉じる</button>
+             </div>
+          </div>
+        )}
+
         {skillModalOpen && editingStaff && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setSkillModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
@@ -511,4 +635,3 @@ export default function Home() {
     </div>
   );
 }
-function str(n) { return String(n); }
