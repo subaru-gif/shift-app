@@ -177,7 +177,6 @@ export default function Home() {
   const handleDateClick = (day) => {
     if (!selectedStaffId) { alert("先に名前を選択してください"); return; }
     setSelectedDay(day);
-    // 初期化
     const existing = requests[day];
     if (existing && existing.type === "時間指定") {
         setCustomStart(existing.start);
@@ -266,7 +265,6 @@ export default function Home() {
     setter(e.target.value);
   }
 
-  // 実働時間計算 (6h以下休憩なし、6h超1h休憩)
   const getWorkHours = (shiftCode, start, end) => {
     if (["A","B","C"].includes(shiftCode)) return 8; 
     if (shiftCode === "M" || shiftCode === "会議") return 0;
@@ -320,7 +318,6 @@ export default function Home() {
     setRequests(previewRequestData.requests || {});
     
     setSelectedDay(d);
-    // 既存リクエストがあればセット
     const req = (previewRequestData.requests || {})[d];
     if (req && req.type === "時間指定") {
         setCustomStart(req.start);
@@ -463,15 +460,15 @@ export default function Home() {
                   </div>
                   
                   <div className="mb-4">
-                     <p className="text-xs font-bold mb-1 text-indigo-700">開け・締め最低人数</p>
+                     <p className="text-xs font-bold mb-1 text-indigo-700">開け・締め人数</p>
                      <div className="flex gap-4 text-xs">
                         <div className="flex items-center gap-1 bg-white p-1 rounded border">
-                           <span>開け (9:30~12:00):</span>
+                           <span>開け人数:</span>
                            <input type="number" className="w-10 border text-center" value={minStaffCounts.open} onChange={(e)=>setMinStaffCounts({...minStaffCounts, open: Number(e.target.value)})} />
                            <span>人</span>
                         </div>
                         <div className="flex items-center gap-1 bg-white p-1 rounded border">
-                           <span>締め (19:00~21:30):</span>
+                           <span>締め人数:</span>
                            <input type="number" className="w-10 border text-center" value={minStaffCounts.close} onChange={(e)=>setMinStaffCounts({...minStaffCounts, close: Number(e.target.value)})} />
                            <span>人</span>
                         </div>
@@ -548,14 +545,11 @@ export default function Home() {
                             <span className="bg-gray-100 px-1 rounded text-[10px]">上限:</span>
                             <input 
                               type="number" 
-                              className="w-8 border text-center"
+                              className="w-8 border text-center" 
                               defaultValue={s.maxDays||22} 
                               onBlur={(e)=>updateStaffParam(s, 'maxDays', Number(e.target.value))}
                             />
                             <span className="text-[10px]">日</span>
-                            <button onClick={()=>toggleKeyStatus(s,'canOpen')} className={`px-2 py-0.5 rounded border ${s.canOpen?'bg-orange-100 text-orange-700':'bg-gray-100 text-gray-400'}`}>鍵開</button>
-                            <button onClick={()=>toggleKeyStatus(s,'canClose')} className={`px-2 py-0.5 rounded border ${s.canClose?'bg-indigo-100 text-indigo-700':'bg-gray-100 text-gray-400'}`}>鍵締</button>
-                            <button onClick={()=>openSkillModal(s)} className="bg-gray-100 px-2 py-0.5 rounded border">スキル</button>
                             
                             {isPart && (
                                <div className="ml-auto flex items-center gap-1">
@@ -565,6 +559,10 @@ export default function Home() {
                                  </select>
                                </div>
                             )}
+
+                            <button onClick={()=>toggleKeyStatus(s,'canOpen')} className={`px-2 py-0.5 rounded border ${s.canOpen?'bg-orange-100 text-orange-700':'bg-gray-100 text-gray-400'}`}>鍵開</button>
+                            <button onClick={()=>toggleKeyStatus(s,'canClose')} className={`px-2 py-0.5 rounded border ${s.canClose?'bg-indigo-100 text-indigo-700':'bg-gray-100 text-gray-400'}`}>鍵締</button>
+                            <button onClick={()=>openSkillModal(s)} className="bg-gray-100 px-2 py-0.5 rounded border">スキル</button>
                           </div>
                           <div className="mt-2 pt-1 border-t flex flex-wrap gap-1">
                              <span className="text-gray-400">会議:</span>
@@ -688,7 +686,6 @@ export default function Home() {
           {!isAdmin && <div className="mt-12 text-right"><details className="text-xs text-gray-300"><summary className="cursor-pointer">Admin</summary><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="border rounded w-16" /><button onClick={handleLogin}>Go</button></details></div>}
         </div>
 
-        {/* モーダル類 (z-index 60に修正) */}
         {modalOpen && (
           <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={()=>setModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
@@ -725,7 +722,6 @@ export default function Home() {
                         className={`border p-1 rounded ${isPaidLeaveSelected ? 'bg-gray-200 text-gray-400' : 'bg-gray-50'}`}
                         disabled={isPaidLeaveSelected}
                       />
-                      {/* 有給ボタン (時間指定の横に配置) */}
                       <button 
                          onClick={()=>{ setIsPaidLeaveSelected(!isPaidLeaveSelected); }} 
                          className={`px-2 py-1 rounded text-xs font-bold border ${isPaidLeaveSelected ? 'bg-pink-500 text-white border-pink-600' : 'bg-white text-pink-500 border-pink-300'}`}
@@ -753,7 +749,6 @@ export default function Home() {
           </div>
         )}
         
-        {/* 提出一覧モーダル (z-index 50) */}
         {previewRequestModalOpen && previewRequestData && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setPreviewRequestModalOpen(false)}>
              <div className="bg-white w-full max-w-md rounded-xl p-6 shadow-2xl overflow-y-auto max-h-[80vh]" onClick={e=>e.stopPropagation()}>
