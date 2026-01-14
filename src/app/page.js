@@ -16,7 +16,7 @@ export default function Home() {
   // ▼ データ
   const [staffs, setStaffs] = useState([]);
   const [selectedStaffId, setSelectedStaffId] = useState("");
-  const [requests, setRequests] = useState({});
+  const [requests, setRequests] = useState({}); // 一般用 または 管理者の一時編集用
   const [allRequests, setAllRequests] = useState([]); 
   const [dailySales, setDailySales] = useState({});
   const [determinedSchedule, setDeterminedSchedule] = useState({});
@@ -35,7 +35,7 @@ export default function Home() {
   const [selectedSkillDetail, setSelectedSkillDetail] = useState(null);
   const [editingStaff, setEditingStaff] = useState(null);
   const [previewRequestModalOpen, setPreviewRequestModalOpen] = useState(false);
-  const [previewRequestData, setPreviewRequestData] = useState(null);
+  const [previewRequestData, setPreviewRequestData] = useState(null); // { ..., requests: {オリジナル} }
   
   const [newStaffName, setNewStaffName] = useState("");
   const [newStaffRank, setNewStaffRank] = useState("パートナー");
@@ -78,20 +78,20 @@ export default function Home() {
   useEffect(() => { fetchStaffs(); }, []);
 
   useEffect(() => {
+    // 一般スタッフ用: 自分のデータのみ取得
     if (!isAdmin && selectedStaffId && year && month) {
       fetchPersonalRequest(selectedStaffId, year, month);
     }
   }, [selectedStaffId, year, month, isAdmin]);
 
   useEffect(() => {
+    // 管理者用: 全データ取得
     if (isAdmin && year && month) {
       fetchConfig(year, month);
       fetchDeterminedShift(year, month);
       fetchAllRequests(year, month);
     }
   }, [isAdmin, year, month]);
-
-  // ----------------------------------------------------
 
   const fetchStaffs = async () => {
     try {
@@ -231,93 +231,9 @@ export default function Home() {
     setSkillDetailModalOpen(true);
   };
 
-  const handleDateClick = (day) => {
-    if (!selectedStaffId) { alert("先に名前を選択してください"); return; }
-    setSelectedDay(day);
-    const existing = requests[day];
-    setIsPaidLeaveSelected(false);
-    setIsFreeSelected(false);
-    setCustomStart("09:30");
-    setCustomEnd("15:00");
-
-    if (existing) {
-        if (existing.type === "時間指定") {
-            setCustomStart(existing.start);
-            setCustomEnd(existing.end);
-        } else if (existing.type === "有給") {
-            setIsPaidLeaveSelected(true);
-        } else if (existing.type === "フリー") {
-            setIsFreeSelected(true);
-        }
-    }
-    setModalOpen(true);
-  };
-  
-  const saveRequest = (type, start = "", end = "") => {
-    setRequests(prev => ({ ...prev, [selectedDay]: { type, start, end } }));
-    setModalOpen(false);
-  };
-  const removeRequest = () => {
-    setRequests(prev => { const d = { ...prev }; delete d[selectedDay]; return d; });
-    setModalOpen(false);
-  };
-  const handleSubmit = async () => {
-    if (!selectedStaffId) return;
-    const staff = staffs.find(s => s.id === selectedStaffId);
-    if(!confirm(`保存しますか？`)) return;
-    
-    const q = query(collection(db, "shifts"), where("staffId", "==", staff.id), where("year", "==", year), where("month", "==", month));
-    const snap = await getDocs(q);
-    snap.forEach(async (d) => { await deleteDoc(doc(db, "shifts", d.id)); });
-
-    await addDoc(collection(db, "shifts"), {
-      staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests, createdAt: new Date()
-    });
-    alert("✅ 保存完了！"); 
-    
-    if(isAdmin) {
-       setAllRequests(prev => {
-         const filtered = prev.filter(r => r.staffId !== staff.id);
-         return [...filtered, { staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests }];
-       });
-       if(previewRequestModalOpen && previewRequestData.staffId === staff.id) {
-         setPreviewRequestData({ ...previewRequestData, requests });
-       }
-       setModalOpen(false);
-    } else {
-       setRequests({}); setSelectedStaffId(""); 
-    }
-  };
-
-  const handleLogin = () => {
-    if (password === "333191") setIsAdmin(true); else alert("パスワードが違います");
-  };
-
-  const toggleMeeting = (day, staffId) => {
-    setMeetingSchedule(prev => {
-      const dayList = prev[day] || [];
-      const newList = dayList.includes(staffId) ? dayList.filter(id => id !== staffId) : [...dayList, staffId];
-      return { ...prev, [day]: newList };
-    });
-  };
-
-  const handleCreateShift = async () => {
-    if(!confirm("クラウドAIでシフトを作成しますか？")) return;
-    try {
-      alert("🤖 計算中...");
-      await saveConfig(); 
-      const res = await fetch('/api', { method: 'POST' }); 
-      if (res.ok) {
-        const data = await res.json();
-        alert("✨ " + data.message);
-        window.location.reload();
-      } else {
-        const err = await res.json();
-        alert("❌ 作成失敗: " + (err.error || "エラー"));
-      }
-    } catch (e) { alert("❌ 通信エラー"); }
-  };
-
+  // ----------------------------------------------------
+  // 時間・ラベル表示ロジック
+  // ----------------------------------------------------
   const roundTime = (val, setter) => {
     if (!val) return;
     const [h, m] = val.split(":");
@@ -351,7 +267,7 @@ export default function Home() {
     return 0;
   };
 
-  // ▼▼▼ ラベル表示ロジック修正（文字列完全一致） ▼▼▼
+  // ★修正: 表示された文字列を見て「早・中・遅」に置き換える逆転ロジック
   const getShiftDisplay = (shiftCode, start, end) => {
     if (shiftCode === "A") return "早";
     if (shiftCode === "B") return "中";
@@ -363,21 +279,163 @@ export default function Home() {
     if (shiftCode === "フリー") return "全";
     
     if ((shiftCode === "時間指定" || !["A","B","C","M","会議","有給","希望休","フリー"].includes(shiftCode)) && start && end) {
-      // 文字列として直接比較 (入力は09:30形式)
-      // "9:30"のような形式にも対応するため、Number変換も併用
-      const [sh, sm] = start.split(":").map(Number);
-      const [eh, em] = end.split(":").map(Number);
+      const label = formatTime(start) + formatTime(end);
       
-      // 早番: 9:30 - 19:00
-      if (sh===9 && sm===30 && eh===19 && em===0) return "早";
-      // 中番: 11:00 - 20:30
-      if (sh===11 && sm===0 && eh===20 && em===30) return "中";
-      // 遅番: 12:00 - 21:30
-      if (sh===12 && sm===0 && eh===21 && em===30) return "遅";
+      // 生成されたラベルが特定のパターンなら置換
+      if (label === "9半19") return "早";
+      if (label === "1120半") return "中"; // 11:00-20:30
+      if (label === "1221半") return "遅"; // 12:00-21:30
       
-      return formatTime(start) + formatTime(end);
+      return label;
     }
     return shiftCode || "";
+  };
+
+  // ----------------------------------------------------
+  // モーダル・修正ロジック
+  // ----------------------------------------------------
+
+  // 編集開始 (一般: 自分のrequests, 管理者: requestsにコピーして編集開始)
+  const handleDateClick = (day) => {
+    // 編集対象のIDがない場合はアラート
+    if (!selectedStaffId) { alert("先に名前を選択してください"); return; }
+    
+    setSelectedDay(day);
+    setIsPaidLeaveSelected(false);
+    setIsFreeSelected(false);
+    setCustomStart("09:30");
+    setCustomEnd("15:00");
+
+    const existing = requests[day];
+    if (existing) {
+        if (existing.type === "時間指定") {
+            setCustomStart(existing.start);
+            setCustomEnd(existing.end);
+        } else if (existing.type === "有給") {
+            setIsPaidLeaveSelected(true);
+        } else if (existing.type === "フリー") {
+            setIsFreeSelected(true);
+        }
+    }
+    setModalOpen(true);
+  };
+  
+  // 管理者用: プレビュー画面からの編集開始
+  const startAdminEdit = (d) => {
+    // 初回タップ時: プレビューデータを編集用ステート(requests)にコピー
+    // ※ プレビュー中のIDと選択IDがずれている場合のガード
+    if (previewRequestData.staffId !== selectedStaffId) {
+        setSelectedStaffId(previewRequestData.staffId);
+        setRequests(previewRequestData.requests || {}); // オリジナルをコピー
+    }
+    
+    // ここからは handleDateClick と同じフローでモーダルを開く
+    // ただし requests は直前にセットした(または既に編集中の)ものが使われる
+    // 非同期setStateのタイミング問題を防ぐため、コピー元を明示
+    const currentRequests = (previewRequestData.staffId !== selectedStaffId) ? (previewRequestData.requests || {}) : requests;
+    
+    setSelectedDay(d);
+    setIsPaidLeaveSelected(false);
+    setIsFreeSelected(false);
+    setCustomStart("09:30");
+    setCustomEnd("15:00");
+
+    const req = currentRequests[d];
+    if (req) {
+        if (req.type === "時間指定") {
+            setCustomStart(req.start);
+            setCustomEnd(req.end);
+        } else if (req.type === "有給") {
+            setIsPaidLeaveSelected(true);
+        } else if (req.type === "フリー") {
+            setIsFreeSelected(true);
+        }
+    }
+    setModalOpen(true);
+  };
+
+  // メモリ上へ保存 (DB保存はしない)
+  const saveRequest = (type, start = "", end = "") => {
+    setRequests(prev => ({ ...prev, [selectedDay]: { type, start, end } }));
+    setModalOpen(false); // 編集モーダルは閉じる
+  };
+  
+  const removeRequest = () => {
+    setRequests(prev => { const d = { ...prev }; delete d[selectedDay]; return d; });
+    setModalOpen(false); // 編集モーダルは閉じる
+  };
+
+  // DBへ保存 (一般は提出、管理者は修正確定)
+  const handleSubmit = async () => {
+    // 管理者モードなら編集中の staffId を使用
+    const targetId = isAdmin ? previewRequestData?.staffId : selectedStaffId;
+    if (!targetId) return;
+    const staff = staffs.find(s => s.id === targetId);
+    
+    if(!confirm(isAdmin ? `変更を保存しますか？` : `提出しますか？`)) return;
+    
+    // 既存削除＆新規追加
+    const q = query(collection(db, "shifts"), where("staffId", "==", staff.id), where("year", "==", year), where("month", "==", month));
+    const snap = await getDocs(q);
+    snap.forEach(async (d) => { await deleteDoc(doc(db, "shifts", d.id)); });
+
+    await addDoc(collection(db, "shifts"), {
+      staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests, createdAt: new Date()
+    });
+    
+    alert("✅ 保存しました"); 
+    
+    if(isAdmin) {
+       // 全データリストも更新して、黄色表示を消す（オリジナルと一致させるため）
+       setAllRequests(prev => {
+         const filtered = prev.filter(r => r.staffId !== staff.id);
+         return [...filtered, { staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests }];
+       });
+       // プレビューデータのオリジナルも更新
+       if(previewRequestModalOpen) {
+         setPreviewRequestData({ ...previewRequestData, requests: requests });
+       }
+       setPreviewRequestModalOpen(false); // 一覧も閉じる
+    } else {
+       setRequests({}); setSelectedStaffId(""); // 一般はリセット
+    }
+  };
+
+  // プレビューを開く (管理者が名前をクリックした時)
+  const openPreview = (reqData) => {
+    setPreviewRequestData(reqData);
+    setSelectedStaffId(reqData.staffId); // 編集対象としてセット
+    setRequests(reqData.requests || {}); // 編集用バッファにコピー
+    setPreviewRequestModalOpen(true);
+  }
+
+  const handleLogin = () => {
+    if (password === "333191") setIsAdmin(true); else alert("パスワードが違います");
+  };
+
+  const toggleMeeting = (day, staffId) => {
+    setMeetingSchedule(prev => {
+      const dayList = prev[day] || [];
+      const newList = dayList.includes(staffId) ? dayList.filter(id => id !== staffId) : [...dayList, staffId];
+      return { ...prev, [day]: newList };
+    });
+  };
+
+  const handleCreateShift = async () => {
+    if(!confirm("クラウドAIでシフトを作成しますか？")) return;
+    try {
+      alert("🤖 計算中...");
+      await saveConfig(); 
+      const res = await fetch('/api', { method: 'POST' }); 
+      if (res.ok) {
+        const data = await res.json();
+        alert("✨ " + data.message);
+        window.location.reload();
+      } else {
+        const err = await res.json();
+        alert("❌ 作成失敗: " + (err.error || "エラー"));
+      }
+    } catch (e) { alert("❌ 通信エラー"); }
   };
 
   const getSortedStaffs = () => {
@@ -390,39 +448,6 @@ export default function Home() {
       if (deptA !== deptB) return deptA - deptB;
       return a.rankId - b.rankId;
     });
-  };
-
-  const openPreview = (reqData) => {
-    setPreviewRequestData(reqData);
-    setPreviewRequestModalOpen(true);
-  }
-  
-  const startAdminEdit = (d) => {
-    const targetReqs = (previewRequestData.staffId === selectedStaffId) ? requests : (previewRequestData.requests || {});
-    
-    if (previewRequestData.staffId !== selectedStaffId) {
-        setSelectedStaffId(previewRequestData.staffId);
-        setRequests(targetReqs);
-    }
-    
-    setSelectedDay(d);
-    setIsPaidLeaveSelected(false);
-    setIsFreeSelected(false);
-    setCustomStart("09:30");
-    setCustomEnd("15:00");
-
-    const req = targetReqs[d];
-    if (req) {
-        if (req.type === "時間指定") {
-            setCustomStart(req.start);
-            setCustomEnd(req.end);
-        } else if (req.type === "有給") {
-            setIsPaidLeaveSelected(true);
-        } else if (req.type === "フリー") {
-            setIsFreeSelected(true);
-        }
-    }
-    setModalOpen(true);
   };
 
   const downloadCSV = () => {
@@ -589,7 +614,7 @@ export default function Home() {
                        const req = allRequests.find(r => r.staffId === s.id);
                        return (
                          <button key={s.id} 
-                           onClick={() => req && openPreview(req)}
+                           onClick={() => openPreview(req)}
                            className={`px-3 py-1 rounded text-xs border ${req ? 'bg-blue-100 text-blue-800 border-blue-300 font-bold' : 'bg-white text-gray-400'}`}
                          >
                            {s.name}
@@ -775,7 +800,7 @@ export default function Home() {
           {!isAdmin && <div className="mt-12 text-right"><details className="text-xs text-gray-300"><summary className="cursor-pointer">Admin</summary><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="border rounded w-16" /><button onClick={handleLogin}>Go</button></details></div>}
         </div>
 
-        {/* モーダル類 */}
+        {/* モーダル類 (z-index 60) */}
         {modalOpen && (
           <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={()=>setModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
@@ -795,7 +820,7 @@ export default function Home() {
                       <input type="time" value={customEnd} onChange={e=>handleTimeChange(e,setCustomEnd)} onBlur={e=>roundTime(e.target.value,setCustomEnd)} className={`border p-1 rounded ${isPaidLeaveSelected || isFreeSelected ? 'bg-gray-200 text-gray-400' : 'bg-gray-50'}`} disabled={isPaidLeaveSelected || isFreeSelected} />
                       <button onClick={()=>{ setIsPaidLeaveSelected(!isPaidLeaveSelected); if(!isPaidLeaveSelected){setIsFreeSelected(false);} }} className={`px-2 py-1 rounded text-xs font-bold border ${isPaidLeaveSelected ? 'bg-pink-500 text-white border-pink-600' : 'bg-white text-pink-500 border-pink-300'}`}>有給</button>
                     </div>
-                    <button onClick={()=>{ if(isPaidLeaveSelected) saveRequest("有給"); else if(isFreeSelected) saveRequest("フリー"); else saveRequest("時間指定",customStart,customEnd); }} className={`w-full py-2 rounded font-bold text-white ${isPaidLeaveSelected ? 'bg-pink-500' : isFreeSelected ? 'bg-green-500' : 'bg-gray-800'}`}>{isPaidLeaveSelected ? "有給で決定" : isFreeSelected ? "フリーで決定" : "時間を決定"}</button>
+                    <button onClick={()=>{ if(isPaidLeaveSelected) saveRequest("有給"); else if(isFreeSelected) saveRequest("フリー"); else saveRequest("時間指定",customStart,customEnd); }} className={`w-full py-2 rounded font-bold text-white ${isPaidLeaveSelected ? 'bg-pink-500' : isFreeSelected ? 'bg-green-500' : 'bg-gray-800'}`}>{isPaidLeaveSelected ? "有給で決定" : isFreeSelected ? "フリーで決定" : "決定 (閉じる)"}</button>
                   </div>
               </div>
               <div className="flex gap-2 mt-6">
@@ -805,7 +830,7 @@ export default function Home() {
           </div>
         )}
         
-        {/* 提出一覧モーダル (ここに保存ボタンを追加) */}
+        {/* 提出一覧モーダル (管理者修正用) */}
         {previewRequestModalOpen && previewRequestData && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setPreviewRequestModalOpen(false)}>
              <div className="bg-white w-full max-w-md rounded-xl p-6 shadow-2xl overflow-y-auto max-h-[80vh]" onClick={e=>e.stopPropagation()}>
@@ -817,14 +842,22 @@ export default function Home() {
                  {['日','月','火','水','木','金','土'].map((d,i)=><div key={i} className="font-bold">{d}</div>)}
                  {[...Array(daysInMonth)].map((_,i)=>{
                     const d = i+1;
-                    // ★修正: 編集中のデータをリアルタイム表示
-                    const isTarget = previewRequestData.staffId === selectedStaffId;
-                    const req = isTarget ? requests[d] : previewRequestData.requests[d];
+                    // 現在編集中のrequestsを参照
+                    const req = requests[d];
                     
-                    // ▼ 変更があった場合に黄色くする
-                    const original = previewRequestData.requests[d];
-                    const isChanged = isTarget && JSON.stringify(req) !== JSON.stringify(original);
-                    const bgClass = isChanged ? 'bg-yellow-100 text-yellow-700 font-bold border-yellow-300' : (req ? 'bg-blue-50 font-bold text-blue-700' : '');
+                    // 変更検知: オリジナルとJSON文字列比較
+                    const originalReq = previewRequestData.requests[d];
+                    const isChanged = JSON.stringify(req) !== JSON.stringify(originalReq);
+                    
+                    // 変更があれば黄色、そうでなければ青(存在すれば)
+                    let bgClass = "";
+                    if (isChanged) bgClass = "bg-yellow-100 text-yellow-700 font-bold border-yellow-300";
+                    else if (req) {
+                        if (req.type === "希望休") bgClass = "bg-red-100 text-red-600 font-bold border-red-200";
+                        else if (req.type === "有給") bgClass = "bg-pink-100 text-pink-600 font-bold border-pink-200";
+                        else if (req.type === "フリー") bgClass = "bg-green-100 text-green-700 font-bold border-green-200";
+                        else bgClass = "bg-blue-50 font-bold text-blue-700";
+                    }
 
                     const disp = req ? getShiftDisplay(req.type, req.start, req.end) : "";
                     return (
@@ -834,7 +867,7 @@ export default function Home() {
                     )
                  })}
                </div>
-               <button onClick={handleSubmit} className="w-full mt-4 py-3 bg-blue-600 text-white font-bold rounded shadow-lg">変更を確定して保存</button>
+               <button onClick={handleSubmit} className="w-full mt-4 py-3 bg-blue-600 text-white font-bold rounded shadow-lg">シフトを修正 (保存)</button>
                <button onClick={()=>setPreviewRequestModalOpen(false)} className="w-full mt-2 py-2 text-gray-500 rounded text-xs">保存せずに閉じる</button>
              </div>
           </div>
