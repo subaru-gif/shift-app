@@ -41,6 +41,7 @@ class handler(BaseHTTPRequestHandler):
             dept_groups = {"家電": [], "季節": [], "情報": [], "通信": []}
             newcomers = [] 
             mentors = []
+            leaders = [] # 店長・リーダー (Rank <= 2)
             
             for doc in docs:
                 data = doc.to_dict()
@@ -54,6 +55,9 @@ class handler(BaseHTTPRequestHandler):
                     newcomers.append(doc.id)
                 elif rank_id <= 3:
                     mentors.append(doc.id)
+                
+                if rank_id <= 2:
+                    leaders.append(doc.id)
 
             # 設定値
             doc_id = f"{TARGET_YEAR}-{TARGET_MONTH}"
@@ -119,9 +123,7 @@ class handler(BaseHTTPRequestHandler):
                 total_work_slots = pulp.lpSum([x[d, s, st] for s in staff_ids for st in ["A","B","C"]])
                 problem += total_work_slots * 8 <= limit_hours
 
-                # 4. 部門最低人数 -> 緩和
-
-                # 5. スキル要件
+                # 4. スキル要件
                 for skill_name, min_val in min_skills.items():
                     if min_val > 0:
                         current_skill_sum = pulp.lpSum([
@@ -130,7 +132,7 @@ class handler(BaseHTTPRequestHandler):
                         ])
                         problem += current_skill_sum >= min_val
 
-                # 6. 鍵
+                # 5. 鍵
                 openers = [s for s in staff_ids if staffs[s].get("canOpen") == True]
                 if openers:
                     problem += pulp.lpSum([x[d, s, "A"] for s in openers]) >= 1
@@ -139,24 +141,21 @@ class handler(BaseHTTPRequestHandler):
                 if closers:
                     problem += pulp.lpSum([x[d, s, "C"] for s in closers]) >= 1
 
-                # 7. 開け・締め人数 (時間指定含む)
+                # 6. 開け・締め人数 (時間指定含む)
                 count_open_vars = []
                 count_close_vars = []
                 
                 for s in staff_ids:
                     req = request_map[d].get(s, {})
-                    
                     if req.get("type") == "時間指定":
                         sh = int(req.get("start", "00:00").split(":")[0])
                         if sh <= 10:
                             count_open_vars.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
-                        
                         eh_str = req.get("end", "00:00")
                         eh = int(eh_str.split(":")[0])
                         em = int(eh_str.split(":")[1])
                         if eh > 21 or (eh == 21 and em >= 30):
                              count_close_vars.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
-                    
                     else:
                         count_open_vars.append(x[d, s, "A"]) 
                         count_close_vars.append(x[d, s, "C"]) 
@@ -164,12 +163,16 @@ class handler(BaseHTTPRequestHandler):
                 problem += pulp.lpSum(count_open_vars) >= min_staff_counts.get("open", 3)
                 problem += pulp.lpSum(count_close_vars) >= min_staff_counts.get("close", 3)
 
-                # 8. 新人サポート
+                # 7. 新人サポート
                 if len(newcomers) > 0 and len(mentors) > 0:
                     for nc in newcomers:
                         nc_working = pulp.lpSum([x[d, nc, st] for st in ["A","B","C"]])
                         mentors_working = pulp.lpSum([x[d, m, st] for m in mentors for st in ["A","B","C"]])
                         problem += nc_working <= mentors_working
+
+                # 8. リーダー以上2名必須
+                if leaders:
+                    problem += pulp.lpSum([x[d, l, st] for l in leaders for st in ["A","B","C"]]) >= 2
 
             # --- 個人制約 ---
             for s in staff_ids:
@@ -199,7 +202,7 @@ class handler(BaseHTTPRequestHandler):
                     d_next = str(d_int + 1)
                     problem += x[d_curr, s, "C"] + x[d_next, s, "A"] <= 1
 
-                # 希望シフト
+                # 希望シフト (社員も有給は絶対)
                 for d in days:
                     if s in meetings.get(d, []): continue
                     req = request_map[d].get(s, {})
@@ -210,7 +213,6 @@ class handler(BaseHTTPRequestHandler):
                     elif r_type == "希望休":
                         problem += pulp.lpSum([x[d, s, st] for st in shift_types]) == 0
                     elif r_type == "フリー":
-                        # A or B or C どれか1つ
                         problem += pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) == 1
                     elif r_type in ["早番", "中番", "遅番"]:
                         target = "A" if r_type=="早番" else "B" if r_type=="中番" else "C"
@@ -218,7 +220,7 @@ class handler(BaseHTTPRequestHandler):
                     elif r_type == "時間指定":
                         problem += pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) == 1
 
-            # --- 4. 目的関数 (優先度 + 早番優先) ---
+            # --- 4. 目的関数 ---
             obj_vars = []
             
             # 早番優先バイアス
@@ -228,7 +230,6 @@ class handler(BaseHTTPRequestHandler):
                 for s in staff_ids:
                     rank_id = staffs[s].get("rankId", 99)
                     
-                    # 基本重み
                     if rank_id <= 3:
                         weight = 100.0
                     else:
