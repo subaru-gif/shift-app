@@ -258,7 +258,6 @@ export default function Home() {
   
   const saveRequest = (type, start = "", end = "") => {
     setRequests(prev => ({ ...prev, [selectedDay]: { type, start, end } }));
-    // 管理者（修正モード）の場合はモーダルを閉じない
     if (!isAdmin) setModalOpen(false);
   };
   const removeRequest = () => {
@@ -279,17 +278,14 @@ export default function Home() {
     });
     alert("✅ 保存完了！"); 
     
-    // 管理者が修正していた場合、全リストも更新
     if(isAdmin) {
        setAllRequests(prev => {
          const filtered = prev.filter(r => r.staffId !== staff.id);
          return [...filtered, { staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests }];
        });
-       // プレビューデータも更新
        if(previewRequestModalOpen && previewRequestData.staffId === staff.id) {
          setPreviewRequestData({ ...previewRequestData, requests });
        }
-       // 編集モーダルを閉じる
        setModalOpen(false);
     } else {
        setRequests({}); setSelectedStaffId(""); 
@@ -339,7 +335,6 @@ export default function Home() {
     setter(e.target.value);
   }
 
-  // 時間フォーマット (11:30 -> 11半, 11:00 -> 11)
   const formatTime = (t) => {
     if(!t) return "";
     const [h, m] = t.split(":");
@@ -359,6 +354,7 @@ export default function Home() {
     return 0;
   };
 
+  // ▼▼▼ ラベル表示ロジック修正 ▼▼▼
   const getShiftDisplay = (shiftCode, start, end) => {
     if (shiftCode === "A") return "早";
     if (shiftCode === "B") return "中";
@@ -369,6 +365,11 @@ export default function Home() {
     if (shiftCode === "希望休") return "希";
     if (shiftCode === "フリー") return "全";
     if ((shiftCode === "時間指定" || !["A","B","C","M","会議","有給","希望休","フリー"].includes(shiftCode)) && start && end) {
+      // 特定の時間帯をラベル変換
+      if (start === "09:30" && end === "19:00") return "早";
+      if (start === "11:00" && end === "20:30") return "中";
+      if (start === "12:00" && end === "21:30") return "遅";
+      
       return formatTime(start) + formatTime(end);
     }
     return shiftCode || "";
@@ -395,7 +396,7 @@ export default function Home() {
     if (!previewRequestData) return;
     const staffId = previewRequestData.staffId;
     setSelectedStaffId(staffId);
-    setRequests(previewRequestData.requests || {});
+    setRequests(previewRequestData.requests || {}); // 編集用ステートにセット
     
     setSelectedDay(d);
     setIsPaidLeaveSelected(false);
@@ -444,6 +445,7 @@ export default function Home() {
     <div className="min-h-screen bg-gray-50 p-2 font-sans text-gray-800 pb-20">
       <div className="max-w-[1400px] mx-auto bg-white shadow-xl rounded-xl overflow-hidden">
         
+        {/* ヘッダー */}
         <div className="bg-blue-700 p-4 text-white flex justify-between items-center sticky top-0 z-20 shadow">
           <h1 className="text-xl font-bold">{year}年{month}月 シフト{isAdmin ? "管理" : "提出"}</h1>
           {isAdmin && (
@@ -456,6 +458,7 @@ export default function Home() {
         </div>
 
         <div className="p-4">
+          {/* 一般スタッフ画面 */}
           {!isAdmin && (
             <div className="max-w-md mx-auto">
               <div className="mb-4 bg-blue-50 p-3 rounded border border-blue-100">
@@ -491,6 +494,7 @@ export default function Home() {
             </div>
           )}
 
+          {/* 管理者：設定・入力タブ */}
           {isAdmin && activeTab === "input" && (
             <div className="grid lg:grid-cols-2 gap-8">
               <div className="space-y-6">
@@ -763,6 +767,7 @@ export default function Home() {
           {!isAdmin && <div className="mt-12 text-right"><details className="text-xs text-gray-300"><summary className="cursor-pointer">Admin</summary><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="border rounded w-16" /><button onClick={handleLogin}>Go</button></details></div>}
         </div>
 
+        {/* モーダル類 */}
         {modalOpen && (
           <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={()=>setModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
@@ -828,13 +833,13 @@ export default function Home() {
               )}
               <div className="flex gap-2 mt-6">
                 <button onClick={removeRequest} className="flex-1 py-2 border border-gray-300 text-gray-500 rounded">クリア</button>
-                {/* 管理者のみ表示される「変更を保存」ボタン（ここで初めてDB保存） */}
                 {isAdmin && <button onClick={handleSubmit} className="flex-1 py-2 bg-blue-600 text-white rounded">変更を保存</button>}
               </div>
             </div>
           </div>
         )}
         
+        {/* 提出一覧モーダル (ここに現在編集中のrequestsを反映させる修正) */}
         {previewRequestModalOpen && previewRequestData && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setPreviewRequestModalOpen(false)}>
              <div className="bg-white w-full max-w-md rounded-xl p-6 shadow-2xl overflow-y-auto max-h-[80vh]" onClick={e=>e.stopPropagation()}>
@@ -846,7 +851,10 @@ export default function Home() {
                  {['日','月','火','水','木','金','土'].map((d,i)=><div key={i} className="font-bold">{d}</div>)}
                  {[...Array(daysInMonth)].map((_,i)=>{
                     const d = i+1;
-                    const req = previewRequestData.requests[d];
+                    // ★ここ修正: 編集中のユーザーならrequestsステートを優先して表示
+                    const isTarget = previewRequestData.staffId === selectedStaffId;
+                    const req = isTarget ? requests[d] : previewRequestData.requests[d];
+                    
                     const disp = req ? getShiftDisplay(req.type, req.start, req.end) : "";
                     return (
                       <div key={d} 

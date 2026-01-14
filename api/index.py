@@ -41,7 +41,8 @@ class handler(BaseHTTPRequestHandler):
             dept_groups = {"家電": [], "季節": [], "情報": [], "通信": []}
             newcomers = [] 
             mentors = []
-            leaders = [] # 店長・リーダー (Rank <= 2)
+            leaders = []
+            store_managers = [] # 店長
             
             for doc in docs:
                 data = doc.to_dict()
@@ -58,6 +59,8 @@ class handler(BaseHTTPRequestHandler):
                 
                 if rank_id <= 2:
                     leaders.append(doc.id)
+                if rank_id == 1:
+                    store_managers.append(doc.id)
 
             # 設定値
             doc_id = f"{TARGET_YEAR}-{TARGET_MONTH}"
@@ -99,6 +102,13 @@ class handler(BaseHTTPRequestHandler):
                         x[d, s, st] = pulp.LpVariable(f"x_{d}_{s}_{st}", 0, 1, pulp.LpBinary)
 
             # --- 3. 制約条件 ---
+            
+            # ★店長早番固定 (B=0, C=0)
+            for sm in store_managers:
+                for d in days:
+                    problem += x[d, sm, "B"] == 0
+                    problem += x[d, sm, "C"] == 0
+
             for d in days:
                 # 1. 会議シフト
                 meeting_members = meetings.get(d, [])
@@ -147,15 +157,18 @@ class handler(BaseHTTPRequestHandler):
                 
                 for s in staff_ids:
                     req = request_map[d].get(s, {})
+                    
                     if req.get("type") == "時間指定":
                         sh = int(req.get("start", "00:00").split(":")[0])
                         if sh <= 10:
                             count_open_vars.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
+                        
                         eh_str = req.get("end", "00:00")
                         eh = int(eh_str.split(":")[0])
                         em = int(eh_str.split(":")[1])
                         if eh > 21 or (eh == 21 and em >= 30):
                              count_close_vars.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
+                    
                     else:
                         count_open_vars.append(x[d, s, "A"]) 
                         count_close_vars.append(x[d, s, "C"]) 
@@ -202,7 +215,7 @@ class handler(BaseHTTPRequestHandler):
                     d_next = str(d_int + 1)
                     problem += x[d_curr, s, "C"] + x[d_next, s, "A"] <= 1
 
-                # 希望シフト (社員も有給は絶対)
+                # 希望シフト
                 for d in days:
                     if s in meetings.get(d, []): continue
                     req = request_map[d].get(s, {})
