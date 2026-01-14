@@ -7,7 +7,6 @@ export default function Home() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [password, setPassword] = useState("");
   
-  // 日付管理
   const [year, setYear] = useState(0);
   const [month, setMonth] = useState(0);
   const [daysInMonth, setDaysInMonth] = useState(30);
@@ -38,13 +37,11 @@ export default function Home() {
   const [previewRequestModalOpen, setPreviewRequestModalOpen] = useState(false);
   const [previewRequestData, setPreviewRequestData] = useState(null);
   
-  // ▼ 新規登録・一括更新用
   const [newStaffName, setNewStaffName] = useState("");
   const [newStaffRank, setNewStaffRank] = useState("パートナー");
   const [newStaffDept, setNewStaffDept] = useState("家電");
   const [bulkMaxDays, setBulkMaxDays] = useState(22);
 
-  // ▼ 時間指定入力用
   const [customStart, setCustomStart] = useState("09:30");
   const [customEnd, setCustomEnd] = useState("15:00");
   const [isPaidLeaveSelected, setIsPaidLeaveSelected] = useState(false);
@@ -54,7 +51,6 @@ export default function Home() {
     fridge: "冷蔵庫", washing: "洗濯機", ac: "エアコン", tv: "TV", mobile: "携帯", pc: "PC"
   };
 
-  // --- 日付切り替え ---
   useEffect(() => {
     const today = new Date();
     let targetY = today.getFullYear();
@@ -77,7 +73,6 @@ export default function Home() {
 
   }, [isAdmin]);
 
-  // --- データ読み込み ---
   useEffect(() => { fetchStaffs(); }, []);
 
   useEffect(() => {
@@ -93,8 +88,6 @@ export default function Home() {
       fetchAllRequests(year, month);
     }
   }, [isAdmin, year, month]);
-
-  // ----------------------------------------------------
 
   const fetchStaffs = async () => {
     try {
@@ -354,7 +347,6 @@ export default function Home() {
     return 0;
   };
 
-  // ▼▼▼ ラベル表示ロジック修正 ▼▼▼
   const getShiftDisplay = (shiftCode, start, end) => {
     if (shiftCode === "A") return "早";
     if (shiftCode === "B") return "中";
@@ -365,11 +357,9 @@ export default function Home() {
     if (shiftCode === "希望休") return "希";
     if (shiftCode === "フリー") return "全";
     if ((shiftCode === "時間指定" || !["A","B","C","M","会議","有給","希望休","フリー"].includes(shiftCode)) && start && end) {
-      // 特定の時間帯をラベル変換
       if (start === "09:30" && end === "19:00") return "早";
       if (start === "11:00" && end === "20:30") return "中";
       if (start === "12:00" && end === "21:30") return "遅";
-      
       return formatTime(start) + formatTime(end);
     }
     return shiftCode || "";
@@ -396,7 +386,7 @@ export default function Home() {
     if (!previewRequestData) return;
     const staffId = previewRequestData.staffId;
     setSelectedStaffId(staffId);
-    setRequests(previewRequestData.requests || {}); // 編集用ステートにセット
+    setRequests(previewRequestData.requests || {});
     
     setSelectedDay(d);
     setIsPaidLeaveSelected(false);
@@ -665,6 +655,7 @@ export default function Home() {
             </div>
           )}
 
+          {/* 管理者：シフト表・分析タブ */}
           {isAdmin && activeTab === "shift" && (
             <div>
               <div className="flex justify-between items-end mb-4">
@@ -772,13 +763,7 @@ export default function Home() {
           <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={()=>setModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
               <h3 className="text-lg font-bold mb-4 text-center border-b pb-2">{month}/{selectedDay} の{isAdmin ? `${staffs.find(s=>s.id===selectedStaffId)?.name}の` : ""}希望</h3>
-              {isEmployee ? (
-                <div className="grid grid-cols-2 gap-3">
-                  <button onClick={()=>saveRequest("希望休")} className="bg-red-100 text-red-700 py-3 rounded-lg font-bold">希望休</button>
-                  <button onClick={()=>saveRequest("有給")} className="bg-pink-100 text-pink-700 py-3 rounded-lg font-bold">有給休暇</button>
-                </div>
-              ) : (
-                <div className="space-y-3">
+              <div className="space-y-3">
                   <div className="grid grid-cols-3 gap-2">
                     <button onClick={()=>saveRequest("早番","09:30","19:00")} className="bg-blue-100 text-blue-800 py-2 rounded font-bold text-sm">早番(A)</button>
                     <button onClick={()=>saveRequest("中番","11:00","20:30")} className="bg-blue-100 text-blue-800 py-2 rounded font-bold text-sm">中番(B)</button>
@@ -787,59 +772,23 @@ export default function Home() {
                   <div className="border-t pt-3 mt-2">
                     <p className="text-xs text-gray-500 mb-1">時間指定 (00/30分)</p>
                     <div className="flex items-center gap-2 mb-3">
-                      <button 
-                         onClick={()=>{ setIsFreeSelected(!isFreeSelected); if(!isFreeSelected){setIsPaidLeaveSelected(false);} }} 
-                         className={`px-2 py-1 rounded text-xs font-bold border ${isFreeSelected ? 'bg-green-500 text-white border-green-600' : 'bg-white text-green-500 border-green-300'}`}
-                      >
-                        フリー
-                      </button>
-
-                      <input 
-                        type="time" 
-                        value={customStart} 
-                        onChange={e=>handleTimeChange(e,setCustomStart)} 
-                        onBlur={e=>roundTime(e.target.value,setCustomStart)} 
-                        className={`border p-1 rounded ${isPaidLeaveSelected || isFreeSelected ? 'bg-gray-200 text-gray-400' : 'bg-gray-50'}`}
-                        disabled={isPaidLeaveSelected || isFreeSelected}
-                      />
+                      <button onClick={()=>{ setIsFreeSelected(!isFreeSelected); if(!isFreeSelected){setIsPaidLeaveSelected(false);} }} className={`px-2 py-1 rounded text-xs font-bold border ${isFreeSelected ? 'bg-green-500 text-white border-green-600' : 'bg-white text-green-500 border-green-300'}`}>フリー</button>
+                      <input type="time" value={customStart} onChange={e=>handleTimeChange(e,setCustomStart)} onBlur={e=>roundTime(e.target.value,setCustomStart)} className={`border p-1 rounded ${isPaidLeaveSelected || isFreeSelected ? 'bg-gray-200 text-gray-400' : 'bg-gray-50'}`} disabled={isPaidLeaveSelected || isFreeSelected} />
                       <span>～</span>
-                      <input 
-                        type="time" 
-                        value={customEnd} 
-                        onChange={e=>handleTimeChange(e,setCustomEnd)} 
-                        onBlur={e=>roundTime(e.target.value,setCustomEnd)} 
-                        className={`border p-1 rounded ${isPaidLeaveSelected || isFreeSelected ? 'bg-gray-200 text-gray-400' : 'bg-gray-50'}`}
-                        disabled={isPaidLeaveSelected || isFreeSelected}
-                      />
-                      <button 
-                         onClick={()=>{ setIsPaidLeaveSelected(!isPaidLeaveSelected); if(!isPaidLeaveSelected){setIsFreeSelected(false);} }} 
-                         className={`px-2 py-1 rounded text-xs font-bold border ${isPaidLeaveSelected ? 'bg-pink-500 text-white border-pink-600' : 'bg-white text-pink-500 border-pink-300'}`}
-                      >
-                        有給
-                      </button>
+                      <input type="time" value={customEnd} onChange={e=>handleTimeChange(e,setCustomEnd)} onBlur={e=>roundTime(e.target.value,setCustomEnd)} className={`border p-1 rounded ${isPaidLeaveSelected || isFreeSelected ? 'bg-gray-200 text-gray-400' : 'bg-gray-50'}`} disabled={isPaidLeaveSelected || isFreeSelected} />
+                      <button onClick={()=>{ setIsPaidLeaveSelected(!isPaidLeaveSelected); if(!isPaidLeaveSelected){setIsFreeSelected(false);} }} className={`px-2 py-1 rounded text-xs font-bold border ${isPaidLeaveSelected ? 'bg-pink-500 text-white border-pink-600' : 'bg-white text-pink-500 border-pink-300'}`}>有給</button>
                     </div>
-                    <button 
-                      onClick={()=>{
-                        if(isPaidLeaveSelected) saveRequest("有給");
-                        else if(isFreeSelected) saveRequest("フリー");
-                        else saveRequest("時間指定",customStart,customEnd);
-                      }} 
-                      className={`w-full py-2 rounded font-bold text-white ${isPaidLeaveSelected ? 'bg-pink-500' : isFreeSelected ? 'bg-green-500' : 'bg-gray-800'}`}
-                    >
-                      {isPaidLeaveSelected ? "有給で決定" : isFreeSelected ? "フリーで決定" : "時間を決定"}
-                    </button>
+                    <button onClick={()=>{ if(isPaidLeaveSelected) saveRequest("有給"); else if(isFreeSelected) saveRequest("フリー"); else saveRequest("時間指定",customStart,customEnd); }} className={`w-full py-2 rounded font-bold text-white ${isPaidLeaveSelected ? 'bg-pink-500' : isFreeSelected ? 'bg-green-500' : 'bg-gray-800'}`}>{isPaidLeaveSelected ? "有給で決定" : isFreeSelected ? "フリーで決定" : "時間を決定"}</button>
                   </div>
-                </div>
-              )}
+              </div>
               <div className="flex gap-2 mt-6">
                 <button onClick={removeRequest} className="flex-1 py-2 border border-gray-300 text-gray-500 rounded">クリア</button>
-                {isAdmin && <button onClick={handleSubmit} className="flex-1 py-2 bg-blue-600 text-white rounded">変更を保存</button>}
               </div>
             </div>
           </div>
         )}
         
-        {/* 提出一覧モーダル (ここに現在編集中のrequestsを反映させる修正) */}
+        {/* 提出一覧モーダル (ここに保存ボタンを追加) */}
         {previewRequestModalOpen && previewRequestData && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setPreviewRequestModalOpen(false)}>
              <div className="bg-white w-full max-w-md rounded-xl p-6 shadow-2xl overflow-y-auto max-h-[80vh]" onClick={e=>e.stopPropagation()}>
@@ -851,22 +800,18 @@ export default function Home() {
                  {['日','月','火','水','木','金','土'].map((d,i)=><div key={i} className="font-bold">{d}</div>)}
                  {[...Array(daysInMonth)].map((_,i)=>{
                     const d = i+1;
-                    // ★ここ修正: 編集中のユーザーならrequestsステートを優先して表示
                     const isTarget = previewRequestData.staffId === selectedStaffId;
                     const req = isTarget ? requests[d] : previewRequestData.requests[d];
-                    
                     const disp = req ? getShiftDisplay(req.type, req.start, req.end) : "";
                     return (
-                      <div key={d} 
-                        className={`aspect-square border rounded flex items-center justify-center cursor-pointer hover:bg-gray-100 ${req?'bg-blue-50 font-bold text-blue-700':''}`}
-                        onClick={() => startAdminEdit(d)}
-                      >
+                      <div key={d} className={`aspect-square border rounded flex items-center justify-center cursor-pointer hover:bg-gray-100 ${req?'bg-blue-50 font-bold text-blue-700':''}`} onClick={() => startAdminEdit(d)}>
                         <div><div className="text-[10px] text-gray-400">{d}</div><div>{disp}</div></div>
                       </div>
                     )
                  })}
                </div>
-               <button onClick={()=>setPreviewRequestModalOpen(false)} className="w-full mt-4 py-2 bg-gray-200 rounded">閉じる</button>
+               <button onClick={handleSubmit} className="w-full mt-4 py-3 bg-blue-600 text-white font-bold rounded shadow-lg">変更を確定して保存</button>
+               <button onClick={()=>setPreviewRequestModalOpen(false)} className="w-full mt-2 py-2 text-gray-500 rounded text-xs">保存せずに閉じる</button>
              </div>
           </div>
         )}
