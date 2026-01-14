@@ -17,13 +17,13 @@ export default function Home() {
   // ▼ データ
   const [staffs, setStaffs] = useState([]);
   const [selectedStaffId, setSelectedStaffId] = useState("");
-  const [requests, setRequests] = useState({}); // 個人の提出用
-  const [allRequests, setAllRequests] = useState([]); // 管理者用：全員分
+  const [requests, setRequests] = useState({});
+  const [allRequests, setAllRequests] = useState([]); 
   const [dailySales, setDailySales] = useState({});
   const [determinedSchedule, setDeterminedSchedule] = useState({});
   const [meetingSchedule, setMeetingSchedule] = useState({}); 
 
-  // ▼ 設定 (初期値は空にし、管理者ログイン後に取得)
+  // ▼ 設定
   const [configCaps, setConfigCaps] = useState({ salesLow: 100, hoursLow: 70, salesHigh: 500, hoursHigh: 100 });
   const [minSkills, setMinSkills] = useState({ fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 });
   const [minStaffCounts, setMinStaffCounts] = useState({ open: 3, close: 3 });
@@ -32,8 +32,8 @@ export default function Home() {
   const [selectedDay, setSelectedDay] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [skillModalOpen, setSkillModalOpen] = useState(false);
-  const [skillDetailModalOpen, setSkillDetailModalOpen] = useState(false); // スキル内訳用
-  const [selectedSkillDetail, setSelectedSkillDetail] = useState(null); // {key: 'ac', list: [...]}
+  const [skillDetailModalOpen, setSkillDetailModalOpen] = useState(false);
+  const [selectedSkillDetail, setSelectedSkillDetail] = useState(null);
   const [editingStaff, setEditingStaff] = useState(null);
   const [previewRequestModalOpen, setPreviewRequestModalOpen] = useState(false);
   const [previewRequestData, setPreviewRequestData] = useState(null);
@@ -42,7 +42,7 @@ export default function Home() {
   const [newStaffName, setNewStaffName] = useState("");
   const [newStaffRank, setNewStaffRank] = useState("パートナー");
   const [newStaffDept, setNewStaffDept] = useState("家電");
-  const [bulkMaxDays, setBulkMaxDays] = useState(22); // 一括更新用
+  const [bulkMaxDays, setBulkMaxDays] = useState(22);
 
   // ▼ 時間指定入力用
   const [customStart, setCustomStart] = useState("09:30");
@@ -54,17 +54,15 @@ export default function Home() {
     fridge: "冷蔵庫", washing: "洗濯機", ac: "エアコン", tv: "TV", mobile: "携帯", pc: "PC"
   };
 
-  // --- ▼▼▼ 日付切り替えロジック ▼▼▼ ---
+  // --- 日付切り替え ---
   useEffect(() => {
     const today = new Date();
     let targetY = today.getFullYear();
     let targetM = today.getMonth() + 1; 
 
     if (isAdmin) {
-      // 【管理者】毎月10日に「翌月」へ
       if (today.getDate() >= 10) targetM += 1;
     } else {
-      // 【提出側】毎月25日に「翌々月」へ
       if (today.getDate() >= 25) targetM += 2;
       else targetM += 1;
     }
@@ -79,21 +77,15 @@ export default function Home() {
 
   }, [isAdmin]);
 
-  // --- ▼▼▼ データ読み込み戦略 (コスト削減) ▼▼▼ ---
-  
-  // 1. 初回はスタッフリストのみ読み込む
-  useEffect(() => {
-    fetchStaffs();
-  }, []);
+  // --- データ読み込み ---
+  useEffect(() => { fetchStaffs(); }, []);
 
-  // 2. 一般スタッフ: 名前を選んだら「自分の提出データ」のみ読み込む
   useEffect(() => {
     if (!isAdmin && selectedStaffId && year && month) {
       fetchPersonalRequest(selectedStaffId, year, month);
     }
   }, [selectedStaffId, year, month, isAdmin]);
 
-  // 3. 管理者: ログインしたら「設定」「全シフト」「作成済シフト」を読み込む
   useEffect(() => {
     if (isAdmin && year && month) {
       fetchConfig(year, month);
@@ -114,7 +106,6 @@ export default function Home() {
     } catch (e) { console.log("Error fetching staffs"); }
   };
 
-  // 個人用データ取得
   const fetchPersonalRequest = async (staffId, y, m) => {
     try {
       const q = query(collection(db, "shifts"), where("staffId", "==", staffId), where("year", "==", y), where("month", "==", m));
@@ -139,10 +130,8 @@ export default function Home() {
         setMinStaffCounts(data.minStaffCounts || { open: 3, close: 3 });
         setMeetingSchedule(data.meetings || {});
       } else {
-        // データがない月の場合、初期値
         setDailySales({});
         setMeetingSchedule({});
-        // 前月の設定を引き継ぐ等のロジックも可だが、ここでは初期値
       }
     } catch (e) { console.log("Config fetch error"); }
   };
@@ -158,7 +147,6 @@ export default function Home() {
 
   const fetchAllRequests = async (y, m) => {
     try {
-      // その月のデータのみ取得（先月以前のデータは読み込まない）
       const q = query(collection(db, "shifts"), where("year", "==", y), where("month", "==", m));
       const snap = await getDocs(q);
       const list = [];
@@ -185,17 +173,14 @@ export default function Home() {
     try {
       await addDoc(collection(db, "staffs"), { 
         name: newStaffName, rank: newStaffRank, rankId: rankMap[newStaffRank] || 99,
-        department: newStaffDept, maxDays: 22,
-        priority: "2", 
+        department: newStaffDept, maxDays: 22, priority: "2", 
         canOpen: false, canClose: false,
         skills: { fridge: 0, washing: 0, ac: 0, tv: 0, mobile: 0, pc: 0 }
       });
-      setNewStaffName(""); 
-      fetchStaffs();
+      setNewStaffName(""); fetchStaffs();
     } catch (error) { alert("登録失敗"); }
   };
 
-  // 上限日数一括更新
   const handleBulkUpdateMaxDays = async () => {
     if(!confirm(`全スタッフの上限日数を ${bulkMaxDays}日 に更新しますか？`)) return;
     try {
@@ -241,7 +226,6 @@ export default function Home() {
     });
   };
 
-  // スキル内訳表示
   const showSkillDetails = (key) => {
     const list = staffs.filter(s => (s.skills?.[key] || 0) > 0)
                        .map(s => ({ name: s.name, val: s.skills[key] }))
@@ -274,18 +258,18 @@ export default function Home() {
   
   const saveRequest = (type, start = "", end = "") => {
     setRequests(prev => ({ ...prev, [selectedDay]: { type, start, end } }));
-    setModalOpen(false);
+    // 管理者（修正モード）の場合はモーダルを閉じない
+    if (!isAdmin) setModalOpen(false);
   };
   const removeRequest = () => {
     setRequests(prev => { const d = { ...prev }; delete d[selectedDay]; return d; });
-    setModalOpen(false);
+    if (!isAdmin) setModalOpen(false);
   };
   const handleSubmit = async () => {
     if (!selectedStaffId) return;
     const staff = staffs.find(s => s.id === selectedStaffId);
-    if(!confirm(`提出・保存しますか？`)) return;
+    if(!confirm(`保存しますか？`)) return;
     
-    // 既存削除＆新規追加 (修正時もここで上書きされる)
     const q = query(collection(db, "shifts"), where("staffId", "==", staff.id), where("year", "==", year), where("month", "==", month));
     const snap = await getDocs(q);
     snap.forEach(async (d) => { await deleteDoc(doc(db, "shifts", d.id)); });
@@ -295,23 +279,20 @@ export default function Home() {
     });
     alert("✅ 保存完了！"); 
     
-    // 管理者が修正していた場合、全リストも更新して反映させる
+    // 管理者が修正していた場合、全リストも更新
     if(isAdmin) {
-       // ローカルステートも更新
        setAllRequests(prev => {
          const filtered = prev.filter(r => r.staffId !== staff.id);
          return [...filtered, { staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests }];
        });
-       if(previewRequestModalOpen) {
+       // プレビューデータも更新
+       if(previewRequestModalOpen && previewRequestData.staffId === staff.id) {
          setPreviewRequestData({ ...previewRequestData, requests });
        }
-    }
-    if(!isAdmin) {
-       // 一般スタッフはリセットしない（続けて入力するため）
+       // 編集モーダルを閉じる
+       setModalOpen(false);
     } else {
-       if(!previewRequestModalOpen) {
-         setRequests({}); setSelectedStaffId(""); 
-       }
+       setRequests({}); setSelectedStaffId(""); 
     }
   };
 
@@ -417,7 +398,6 @@ export default function Home() {
     setRequests(previewRequestData.requests || {});
     
     setSelectedDay(d);
-    // 初期化
     setIsPaidLeaveSelected(false);
     setIsFreeSelected(false);
     setCustomStart("09:30");
@@ -464,7 +444,6 @@ export default function Home() {
     <div className="min-h-screen bg-gray-50 p-2 font-sans text-gray-800 pb-20">
       <div className="max-w-[1400px] mx-auto bg-white shadow-xl rounded-xl overflow-hidden">
         
-        {/* ヘッダー */}
         <div className="bg-blue-700 p-4 text-white flex justify-between items-center sticky top-0 z-20 shadow">
           <h1 className="text-xl font-bold">{year}年{month}月 シフト{isAdmin ? "管理" : "提出"}</h1>
           {isAdmin && (
@@ -477,7 +456,6 @@ export default function Home() {
         </div>
 
         <div className="p-4">
-          {/* 一般スタッフ画面 */}
           {!isAdmin && (
             <div className="max-w-md mx-auto">
               <div className="mb-4 bg-blue-50 p-3 rounded border border-blue-100">
@@ -513,7 +491,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* 管理者：設定・入力タブ */}
           {isAdmin && activeTab === "input" && (
             <div className="grid lg:grid-cols-2 gap-8">
               <div className="space-y-6">
@@ -623,7 +600,6 @@ export default function Home() {
                       <button onClick={handleAddStaff} className="bg-green-600 text-white p-1 px-3 rounded font-bold text-xs">追加</button>
                    </div>
                    
-                   {/* 上限日数一括更新 */}
                    <div className="flex items-center gap-2 mb-4 bg-gray-100 p-2 rounded">
                       <span className="text-xs font-bold">上限日数一括:</span>
                       <input type="number" className="w-10 border text-center text-sm" value={bulkMaxDays} onChange={e=>setBulkMaxDays(e.target.value)} />
@@ -685,7 +661,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* 管理者：シフト表・分析タブ */}
           {isAdmin && activeTab === "shift" && (
             <div>
               <div className="flex justify-between items-end mb-4">
@@ -788,7 +763,6 @@ export default function Home() {
           {!isAdmin && <div className="mt-12 text-right"><details className="text-xs text-gray-300"><summary className="cursor-pointer">Admin</summary><input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="border rounded w-16" /><button onClick={handleLogin}>Go</button></details></div>}
         </div>
 
-        {/* モーダル類 */}
         {modalOpen && (
           <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={()=>setModalOpen(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-6 shadow-2xl" onClick={e=>e.stopPropagation()}>
@@ -854,6 +828,7 @@ export default function Home() {
               )}
               <div className="flex gap-2 mt-6">
                 <button onClick={removeRequest} className="flex-1 py-2 border border-gray-300 text-gray-500 rounded">クリア</button>
+                {/* 管理者のみ表示される「変更を保存」ボタン（ここで初めてDB保存） */}
                 {isAdmin && <button onClick={handleSubmit} className="flex-1 py-2 bg-blue-600 text-white rounded">変更を保存</button>}
               </div>
             </div>
