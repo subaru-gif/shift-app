@@ -51,6 +51,7 @@ export default function Home() {
     fridge: "冷蔵庫", washing: "洗濯機", ac: "エアコン", tv: "TV", mobile: "携帯", pc: "PC"
   };
 
+  // --- 日付切り替え ---
   useEffect(() => {
     const today = new Date();
     let targetY = today.getFullYear();
@@ -73,6 +74,7 @@ export default function Home() {
 
   }, [isAdmin]);
 
+  // --- データ読み込み ---
   useEffect(() => { fetchStaffs(); }, []);
 
   useEffect(() => {
@@ -88,6 +90,8 @@ export default function Home() {
       fetchAllRequests(year, month);
     }
   }, [isAdmin, year, month]);
+
+  // ----------------------------------------------------
 
   const fetchStaffs = async () => {
     try {
@@ -251,11 +255,11 @@ export default function Home() {
   
   const saveRequest = (type, start = "", end = "") => {
     setRequests(prev => ({ ...prev, [selectedDay]: { type, start, end } }));
-    if (!isAdmin) setModalOpen(false);
+    setModalOpen(false);
   };
   const removeRequest = () => {
     setRequests(prev => { const d = { ...prev }; delete d[selectedDay]; return d; });
-    if (!isAdmin) setModalOpen(false);
+    setModalOpen(false);
   };
   const handleSubmit = async () => {
     if (!selectedStaffId) return;
@@ -347,6 +351,7 @@ export default function Home() {
     return 0;
   };
 
+  // ▼▼▼ ラベル表示ロジック修正（文字列完全一致） ▼▼▼
   const getShiftDisplay = (shiftCode, start, end) => {
     if (shiftCode === "A") return "早";
     if (shiftCode === "B") return "中";
@@ -356,10 +361,20 @@ export default function Home() {
     if (shiftCode === "有給") return "有";
     if (shiftCode === "希望休") return "希";
     if (shiftCode === "フリー") return "全";
+    
     if ((shiftCode === "時間指定" || !["A","B","C","M","会議","有給","希望休","フリー"].includes(shiftCode)) && start && end) {
-      if (start === "09:30" && end === "19:00") return "早";
-      if (start === "11:00" && end === "20:30") return "中";
-      if (start === "12:00" && end === "21:30") return "遅";
+      // 文字列として直接比較 (入力は09:30形式)
+      // "9:30"のような形式にも対応するため、Number変換も併用
+      const [sh, sm] = start.split(":").map(Number);
+      const [eh, em] = end.split(":").map(Number);
+      
+      // 早番: 9:30 - 19:00
+      if (sh===9 && sm===30 && eh===19 && em===0) return "早";
+      // 中番: 11:00 - 20:30
+      if (sh===11 && sm===0 && eh===20 && em===30) return "中";
+      // 遅番: 12:00 - 21:30
+      if (sh===12 && sm===0 && eh===21 && em===30) return "遅";
+      
       return formatTime(start) + formatTime(end);
     }
     return shiftCode || "";
@@ -383,10 +398,12 @@ export default function Home() {
   }
   
   const startAdminEdit = (d) => {
-    if (!previewRequestData) return;
-    const staffId = previewRequestData.staffId;
-    setSelectedStaffId(staffId);
-    setRequests(previewRequestData.requests || {});
+    const targetReqs = (previewRequestData.staffId === selectedStaffId) ? requests : (previewRequestData.requests || {});
+    
+    if (previewRequestData.staffId !== selectedStaffId) {
+        setSelectedStaffId(previewRequestData.staffId);
+        setRequests(targetReqs);
+    }
     
     setSelectedDay(d);
     setIsPaidLeaveSelected(false);
@@ -394,7 +411,7 @@ export default function Home() {
     setCustomStart("09:30");
     setCustomEnd("15:00");
 
-    const req = (previewRequestData.requests || {})[d];
+    const req = targetReqs[d];
     if (req) {
         if (req.type === "時間指定") {
             setCustomStart(req.start);
@@ -800,11 +817,18 @@ export default function Home() {
                  {['日','月','火','水','木','金','土'].map((d,i)=><div key={i} className="font-bold">{d}</div>)}
                  {[...Array(daysInMonth)].map((_,i)=>{
                     const d = i+1;
+                    // ★修正: 編集中のデータをリアルタイム表示
                     const isTarget = previewRequestData.staffId === selectedStaffId;
                     const req = isTarget ? requests[d] : previewRequestData.requests[d];
+                    
+                    // ▼ 変更があった場合に黄色くする
+                    const original = previewRequestData.requests[d];
+                    const isChanged = isTarget && JSON.stringify(req) !== JSON.stringify(original);
+                    const bgClass = isChanged ? 'bg-yellow-100 text-yellow-700 font-bold border-yellow-300' : (req ? 'bg-blue-50 font-bold text-blue-700' : '');
+
                     const disp = req ? getShiftDisplay(req.type, req.start, req.end) : "";
                     return (
-                      <div key={d} className={`aspect-square border rounded flex items-center justify-center cursor-pointer hover:bg-gray-100 ${req?'bg-blue-50 font-bold text-blue-700':''}`} onClick={() => startAdminEdit(d)}>
+                      <div key={d} className={`aspect-square border rounded flex items-center justify-center cursor-pointer hover:bg-gray-100 ${bgClass}`} onClick={() => startAdminEdit(d)}>
                         <div><div className="text-[10px] text-gray-400">{d}</div><div>{disp}</div></div>
                       </div>
                     )
