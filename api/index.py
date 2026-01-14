@@ -48,10 +48,17 @@ class handler(BaseHTTPRequestHandler):
                 data = doc.to_dict()
                 staffs[doc.id] = data
                 dept = data.get("department")
+                
+                # ★修正: 役職名からRankIDを補正
+                rank_str = data.get("rank", "")
+                if rank_str == "店長":
+                    rank_id = 1
+                else:
+                    rank_id = data.get("rankId", 99)
+
                 if dept in dept_groups:
                     dept_groups[dept].append(doc.id)
                 
-                rank_id = data.get("rankId", 99)
                 if rank_id == 5: 
                     newcomers.append(doc.id)
                 elif rank_id <= 3:
@@ -59,6 +66,7 @@ class handler(BaseHTTPRequestHandler):
                 
                 if rank_id <= 2:
                     leaders.append(doc.id)
+                
                 if rank_id == 1:
                     store_managers.append(doc.id)
 
