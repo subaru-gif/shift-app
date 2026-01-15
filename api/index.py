@@ -42,14 +42,14 @@ class handler(BaseHTTPRequestHandler):
             newcomers = [] 
             mentors = []
             leaders = []
-            store_managers = [] # 店長
+            store_managers = [] 
             
             for doc in docs:
                 data = doc.to_dict()
                 staffs[doc.id] = data
                 dept = data.get("department")
                 
-                # ★修正: 役職名からRankIDを補正
+                # 役職名からRankIDを補正
                 rank_str = data.get("rank", "")
                 if rank_str == "店長":
                     rank_id = 1
@@ -111,25 +111,25 @@ class handler(BaseHTTPRequestHandler):
 
             # --- 3. 制約条件 ---
             
-            # ★店長早番固定 (B=0, C=0)
+            # 店長早番固定
             for sm in store_managers:
                 for d in days:
                     problem += x[d, sm, "B"] == 0
                     problem += x[d, sm, "C"] == 0
 
             for d in days:
-                # 1. 会議シフト
+                # 会議
                 meeting_members = meetings.get(d, [])
                 for s in meeting_members:
                     if s in staff_ids:
                         problem += x[d, s, "M"] == 1
                         problem += x[d, s, "A"] + x[d, s, "B"] + x[d, s, "C"] == 0
 
-                # 2. 1人1日1シフト
+                # 1日1シフト
                 for s in staff_ids:
                     problem += pulp.lpSum([x[d, s, st] for st in shift_types]) <= 1
 
-                # 3. 労働時間キャップ
+                # 労働時間キャップ
                 sales = int(daily_sales.get(d, 0))
                 if sales <= config_caps["salesLow"]:
                     limit_hours = config_caps["hoursLow"]
@@ -141,7 +141,7 @@ class handler(BaseHTTPRequestHandler):
                 total_work_slots = pulp.lpSum([x[d, s, st] for s in staff_ids for st in ["A","B","C"]])
                 problem += total_work_slots * 8 <= limit_hours
 
-                # 4. スキル要件
+                # スキル
                 for skill_name, min_val in min_skills.items():
                     if min_val > 0:
                         current_skill_sum = pulp.lpSum([
@@ -150,7 +150,7 @@ class handler(BaseHTTPRequestHandler):
                         ])
                         problem += current_skill_sum >= min_val
 
-                # 5. 鍵
+                # 鍵
                 openers = [s for s in staff_ids if staffs[s].get("canOpen") == True]
                 if openers:
                     problem += pulp.lpSum([x[d, s, "A"] for s in openers]) >= 1
@@ -159,24 +159,21 @@ class handler(BaseHTTPRequestHandler):
                 if closers:
                     problem += pulp.lpSum([x[d, s, "C"] for s in closers]) >= 1
 
-                # 6. 開け・締め人数 (時間指定含む)
+                # 人数
                 count_open_vars = []
                 count_close_vars = []
                 
                 for s in staff_ids:
                     req = request_map[d].get(s, {})
-                    
                     if req.get("type") == "時間指定":
                         sh = int(req.get("start", "00:00").split(":")[0])
                         if sh <= 10:
                             count_open_vars.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
-                        
                         eh_str = req.get("end", "00:00")
                         eh = int(eh_str.split(":")[0])
                         em = int(eh_str.split(":")[1])
                         if eh > 21 or (eh == 21 and em >= 30):
                              count_close_vars.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
-                    
                     else:
                         count_open_vars.append(x[d, s, "A"]) 
                         count_close_vars.append(x[d, s, "C"]) 
@@ -184,73 +181,103 @@ class handler(BaseHTTPRequestHandler):
                 problem += pulp.lpSum(count_open_vars) >= min_staff_counts.get("open", 3)
                 problem += pulp.lpSum(count_close_vars) >= min_staff_counts.get("close", 3)
 
-                # 7. 新人サポート
+                # 新人
                 if len(newcomers) > 0 and len(mentors) > 0:
                     for nc in newcomers:
                         nc_working = pulp.lpSum([x[d, nc, st] for st in ["A","B","C"]])
                         mentors_working = pulp.lpSum([x[d, m, st] for m in mentors for st in ["A","B","C"]])
                         problem += nc_working <= mentors_working
 
-                # 8. リーダー以上2名必須
+                # リーダー
                 if leaders:
                     problem += pulp.lpSum([x[d, l, st] for l in leaders for st in ["A","B","C"]]) >= 2
 
             # --- 個人制約 ---
+            # 連勤対策用の変数
+            consecutive_penalties = []
+
             for s in staff_ids:
+                rank_id = staffs[s].get("rankId", 99)
+                rank = staffs[s].get("rank", "")
+
+                # 上限日数
                 max_days = staffs[s].get("maxDays", 22)
                 problem += pulp.lpSum([x[d, s, st] for d in days for st in shift_types]) <= max_days
                 
-                rank = staffs[s].get("rank", "")
+                # パートナーは希望日以外休み
                 if rank in ["パートナー", "新規パートナー"]:
                     for d in days:
                         if s not in meetings.get(d, []):
                             if str(d) not in request_map or s not in request_map[str(d)]:
                                 problem += pulp.lpSum([x[d, s, st] for st in shift_types]) == 0
 
-                # 連勤制限
-                for d_int in range(1, DAYS_IN_MONTH - 5):
-                    week_vars = []
-                    for offset in range(7):
-                        target_day = str(d_int + offset)
-                        if int(target_day) <= DAYS_IN_MONTH:
-                            week_vars.extend([x[target_day, s, st] for st in shift_types])
-                    if len(week_vars) == 7:
-                        problem += pulp.lpSum(week_vars) <= 6
+                # ★修正: 連勤制限 (7日間の合計出勤数 <= 6) => 7連勤禁止
+                for i in range(DAYS_IN_MONTH - 6):
+                    window_days = days[i : i+7] # 7日間
+                    problem += pulp.lpSum([x[d, s, st] for d in window_days for st in shift_types]) <= 6
                 
-                # インターバル
+                # ★追加: 社員以上(Rank<=3)の3連勤以上ペナルティ
+                # 連続する3日間 (d, d+1, d+2) が全て出勤ならペナルティ変数を1にする
+                if rank_id <= 3:
+                    for i in range(DAYS_IN_MONTH - 2):
+                        d1 = days[i]
+                        d2 = days[i+1]
+                        d3 = days[i+2]
+                        
+                        # 3日間すべて働くかどうかを表す変数 (0 or 1)
+                        is_3_consecutive = pulp.LpVariable(f"c3_{s}_{d1}", 0, 1, pulp.LpBinary)
+                        
+                        # 制約: (d1出勤 + d2出勤 + d3出勤) - 3連勤フラグ <= 2
+                        # つまり、3日とも出勤(合計3)の場合のみ、フラグが1になることを強制できる(目的関数でマイナスにするため)
+                        # ここでは緩和問題として「フラグが1なら3連勤」とするため
+                        # d1+d2+d3 >= 3 * is_3_consecutive だと、出勤してないのにフラグ1にできてしまう
+                        # 逆に d1+d2+d3 - 2 <= is_3_consecutive だと、3連勤なら 1 <= flag となりフラグが立つ
+                        
+                        work_sum = pulp.lpSum([x[d, s, st] for d in [d1, d2, d3] for st in shift_types])
+                        problem += work_sum - 2 <= is_3_consecutive
+                        
+                        consecutive_penalties.append(is_3_consecutive)
+
+                # インターバル (遅番 -> 早番 禁止)
                 for d_int in range(1, DAYS_IN_MONTH):
                     d_curr = str(d_int)
                     d_next = str(d_int + 1)
                     problem += x[d_curr, s, "C"] + x[d_next, s, "A"] <= 1
 
-                # 希望シフト
-                for d in days:
+            # --- 4. 目的関数 ---
+            obj_vars = []
+            shift_bias = {"A": 1.1, "B": 1.05, "C": 1.0}
+
+            for d in days:
+                for s in staff_ids:
+                    # 希望シフト処理
                     if s in meetings.get(d, []): continue
                     req = request_map[d].get(s, {})
                     r_type = req.get("type")
 
+                    # 有給 (絶対厳守)
                     if r_type == "有給":
                         problem += pulp.lpSum([x[d, s, st] for st in shift_types]) == 0
+                    
+                    # 希望休 (★修正: ペナルティ方式へ変更)
                     elif r_type == "希望休":
-                        problem += pulp.lpSum([x[d, s, st] for st in shift_types]) == 0
+                        # 出勤してしまったら大幅減点 (-5000点)
+                        # これにより「基本は休み」だが「詰むくらいなら出勤」になる
+                        for st in shift_types:
+                            obj_vars.append(x[d, s, st] * -5000.0)
+
+                    # フリー
                     elif r_type == "フリー":
                         problem += pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) == 1
+                    # 時間指定など
                     elif r_type in ["早番", "中番", "遅番"]:
                         target = "A" if r_type=="早番" else "B" if r_type=="中番" else "C"
                         problem += x[d, s, target] == 1
                     elif r_type == "時間指定":
                         problem += pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) == 1
 
-            # --- 4. 目的関数 ---
-            obj_vars = []
-            
-            # 早番優先バイアス
-            shift_bias = {"A": 1.1, "B": 1.05, "C": 1.0}
-
-            for d in days:
-                for s in staff_ids:
+                    # 基本スコア (出勤すると加点)
                     rank_id = staffs[s].get("rankId", 99)
-                    
                     if rank_id <= 3:
                         weight = 100.0
                     else:
@@ -263,6 +290,13 @@ class handler(BaseHTTPRequestHandler):
                         bias = shift_bias.get(st, 1.0)
                         obj_vars.append(x[d, s, st] * weight * bias)
             
+            # ペナルティ項の追加
+            # 社員の3連勤ペナルティ (1回につき -50点)
+            # 4連勤だと、(1-2-3日目)と(2-3-4日目)で2回カウントされるので -100点になる
+            # これで「長く続くほど嫌がる」ロジックになる
+            for p_var in consecutive_penalties:
+                obj_vars.append(p_var * -50.0)
+
             problem += pulp.lpSum(obj_vars)
 
             # --- 5. 実行 ---
