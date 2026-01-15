@@ -16,7 +16,7 @@ export default function Home() {
   // ▼ データ
   const [staffs, setStaffs] = useState([]);
   const [selectedStaffId, setSelectedStaffId] = useState("");
-  const [requests, setRequests] = useState({}); // 一般用 または 管理者の一時編集用
+  const [requests, setRequests] = useState({});
   const [allRequests, setAllRequests] = useState([]); 
   const [dailySales, setDailySales] = useState({});
   const [determinedSchedule, setDeterminedSchedule] = useState({});
@@ -251,7 +251,7 @@ export default function Home() {
 
   const getWorkHours = (shiftCode, start, end) => {
     if (["A","B","C"].includes(shiftCode)) return 8; 
-    if (shiftCode === "M" || shiftCode === "会議") return 0;
+    if (shiftCode === "M" || shiftCode === "会議" || shiftCode === "有給") return 0; // 有給は0時間
     if (shiftCode === "時間指定" && start && end) {
         const [sh, sm] = start.split(":").map(Number);
         const [eh, em] = end.split(":").map(Number);
@@ -262,13 +262,14 @@ export default function Home() {
     return 0;
   };
 
+  // ★修正: 有給を表示
   const getShiftDisplay = (shiftCode, start, end) => {
     if (shiftCode === "A") return "早";
     if (shiftCode === "B") return "中";
     if (shiftCode === "C") return "遅";
     if (shiftCode === "M") return "議";
     if (shiftCode === "会議") return "議";
-    if (shiftCode === "有給") return "有";
+    if (shiftCode === "有給") return "有"; // 有給を表示
     if (shiftCode === "希望休") return "希";
     if (shiftCode === "フリー") return "全";
     
@@ -288,11 +289,18 @@ export default function Home() {
   const getSortedStaffs = () => {
     const deptOrder = { "季節": 1, "家電": 2, "情報": 3, "通信": 4 };
     return [...staffs].sort((a, b) => {
-      if (a.rankId === 1 && b.rankId !== 1) return -1;
-      if (a.rankId !== 1 && b.rankId === 1) return 1;
+      // 店長・リーダー(1,2)は部門関係なく一番上
+      if (a.rankId <= 2 && b.rankId > 2) return -1;
+      if (a.rankId > 2 && b.rankId <= 2) return 1;
+      // 両方リーダー以上ならランク順
+      if (a.rankId <= 2 && b.rankId <= 2) return a.rankId - b.rankId;
+
+      // 以下、一般スタッフは部門順
       const deptA = deptOrder[a.department] || 99;
       const deptB = deptOrder[b.department] || 99;
       if (deptA !== deptB) return deptA - deptB;
+      
+      // 同じ部門ならランク順
       return a.rankId - b.rankId;
     });
   };
@@ -441,6 +449,9 @@ export default function Home() {
   const isEmployee = currentStaff && (currentStaff.rankId <= 3); // 数値判定に変更
   const isPart = currentStaff && !isEmployee;
 
+  // ソート済みスタッフリストを取得
+  const sortedStaffs = getSortedStaffs();
+
   return (
     <div className="min-h-screen bg-gray-50 p-2 font-sans text-gray-800 pb-20">
       <div className="max-w-[1400px] mx-auto bg-white shadow-xl rounded-xl overflow-hidden">
@@ -493,6 +504,7 @@ export default function Home() {
 
           {isAdmin && activeTab === "input" && (
             <div className="grid lg:grid-cols-2 gap-8">
+              {/* (省略なし: 左カラム) */}
               <div className="space-y-6">
                 <div className="bg-white p-4 rounded border shadow-sm">
                   <h3 className="font-bold text-sm mb-4">📈 スタッフ総スキル保有量</h3>
@@ -589,6 +601,7 @@ export default function Home() {
                 </div>
               </div>
 
+              {/* (管理者画面：右カラム) */}
               <div className="space-y-4">
                 <div className="p-4 rounded bg-gray-50 border shadow-sm">
                    <h3 className="font-bold text-sm mb-2">👤 スタッフ管理・会議設定</h3>
@@ -661,6 +674,7 @@ export default function Home() {
             </div>
           )}
 
+          {/* 管理者：シフト表・分析タブ */}
           {isAdmin && activeTab === "shift" && (
             <div>
               <div className="flex justify-between items-end mb-4">
@@ -703,8 +717,14 @@ export default function Home() {
                     ))}
                   </thead>
                   <tbody>
-                    {getSortedStaffs().map((s) => (
-                      <tr key={s.id} className="hover:bg-gray-50">
+                    {sortedStaffs.map((s, index) => {
+                      // ★修正: 部門が変わるタイミングで黒枠を追加
+                      const prevDept = index > 0 ? sortedStaffs[index - 1].department : null;
+                      const isDeptChanged = index > 0 && prevDept !== s.department && s.rankId > 2; // リーダー以上は特別扱いなので除外
+                      const borderClass = isDeptChanged ? "border-t-4 border-black" : "";
+
+                      return (
+                      <tr key={s.id} className={`hover:bg-gray-50 ${borderClass}`}>
                         <td className="p-2 border font-bold text-left whitespace-nowrap sticky left-0 bg-white z-10 w-40 truncate">
                            {s.name} 
                            <span className="text-[9px] text-gray-400 ml-1">
@@ -721,12 +741,13 @@ export default function Home() {
                              if(disp==="中") cls="text-green-600 font-bold bg-green-50";
                              if(disp==="遅") cls="text-orange-600 font-bold bg-orange-50";
                              if(disp==="議") cls="text-purple-600 font-bold bg-purple-50";
+                             if(disp==="有") cls="text-pink-600 font-bold bg-pink-50"; // 有給スタイル
                              if(disp.length > 2) cls="text-xs text-gray-600 bg-gray-50 font-bold";
                            }
                            return <td key={i} className={`border h-8 ${cls}`}>{disp}</td>;
                         })}
                       </tr>
-                    ))}
+                    )})}
                     <tr className="bg-gray-100 font-bold border-t-2">
                        <td className="p-2 border sticky left-0 bg-gray-100">日別スキル充足</td>
                        {[...Array(daysInMonth)].map((_, i) => {
@@ -770,13 +791,11 @@ export default function Home() {
               <h3 className="text-lg font-bold mb-4 text-center border-b pb-2">{month}/{selectedDay} の{isAdmin ? `${staffs.find(s=>s.id===selectedStaffId)?.name}の` : ""}希望</h3>
               
               {isEmployee ? (
-                // ★修正: 社員以上は「希望休」「有給」のみ表示
                 <div className="grid grid-cols-2 gap-3">
                   <button onClick={()=>saveRequest("希望休")} className="bg-red-100 text-red-700 py-3 rounded-lg font-bold">希望休</button>
                   <button onClick={()=>saveRequest("有給")} className="bg-pink-100 text-pink-700 py-3 rounded-lg font-bold">有給休暇</button>
                 </div>
               ) : (
-                // パートナー用
                 <div className="space-y-3">
                   <div className="grid grid-cols-3 gap-2">
                     <button onClick={()=>saveRequest("早番","09:30","19:00")} className="bg-blue-100 text-blue-800 py-2 rounded font-bold text-sm">早番(A)</button>
