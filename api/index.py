@@ -6,7 +6,7 @@ from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 import pulp
 import warnings
-import datetime # 曜日判定用に追加
+import datetime 
 
 warnings.filterwarnings("ignore")
 
@@ -123,16 +123,15 @@ class handler(BaseHTTPRequestHandler):
             # 3. 日別ループで制約を一括適用
             # ==========================================
             for d in days:
-                # 曜日判定 (0:月, ... 5:土, 6:日)
+                # 曜日判定 (土=5, 日=6)
                 current_date = datetime.date(TARGET_YEAR, TARGET_MONTH, int(d))
                 is_weekend = current_date.weekday() >= 5
 
                 # --- 3-1. 基本制約 ---
                 for s in staff_ids:
-                    # 1日1シフト
                     problem += pulp.lpSum([x[d, s, st] for st in shift_types]) <= 1
 
-                # 会議 (ユーザー登録日のみM固定)
+                # 会議
                 meeting_members = meetings.get(d, [])
                 for s in staff_ids:
                     if s in meeting_members:
@@ -142,11 +141,10 @@ class handler(BaseHTTPRequestHandler):
                         problem += x[d, s, "M"] == 0
 
                 # --- 3-2. 人数・鍵カウント ---
-                count_open_staff = [] # 10:00にいる人
-                count_close_staff = [] # 21:30にいる人
-                count_open_key = [] # 9:30にいる鍵持ち
-                count_close_key = [] # 21:30にいる鍵持ち
-                
+                count_open_staff = [] 
+                count_close_staff = [] 
+                count_open_key = [] 
+                count_close_key = [] 
                 total_partner_hours = [] 
 
                 for s in staff_ids:
@@ -161,44 +159,41 @@ class handler(BaseHTTPRequestHandler):
                         start_h = int(sh_str[0]) + int(sh_str[1])/60
                         end_h = int(eh_str[0]) + int(eh_str[1])/60
 
-                    # 1. 開け人数 (10:00)
+                    # 開け (10:00)
                     if is_custom:
                         if start_h <= 10.0: count_open_staff.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
                     else:
                         count_open_staff.append(x[d, s, "A"]) 
 
-                    # 2. 締め人数 (21:30)
+                    # 締め (21:30)
                     if is_custom:
                         if end_h >= 21.5: count_close_staff.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
                     else:
                         count_close_staff.append(x[d, s, "C"])
 
-                    # 3. 鍵開け (9:30)
+                    # 鍵開け (9:30)
                     if staffs[s].get("canOpen"):
                         if is_custom:
                             if start_h <= 9.5: count_open_key.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
                         else:
                             count_open_key.append(x[d, s, "A"])
 
-                    # 4. 鍵締め (21:30)
+                    # 鍵締め (21:30)
                     if staffs[s].get("canClose"):
                         if is_custom:
                             if end_h >= 21.5: count_close_key.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
                         else:
                             count_close_key.append(x[d, s, "C"])
 
-                    # 5. パートナー労働時間
+                    # パートナー労働時間
                     if s in partners:
                         total_partner_hours.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) * 8)
 
-                # --- 3-3. 制約適用 (日別) ---
-                
-                # 最低人数
+                # --- 3-3. 制約適用 ---
                 problem += pulp.lpSum(count_open_staff) >= min_staff_counts.get("open", 3)
                 problem += pulp.lpSum(count_close_staff) >= min_staff_counts.get("close", 3)
 
-                # 鍵開け・締め人員確保 (絶対)
-                # ★修正: ループ内で適用することで、毎日確実にチェックされる
+                # 鍵人員確保 (絶対)
                 problem += pulp.lpSum(count_open_key) >= 1
                 problem += pulp.lpSum(count_close_key) >= 1
 
@@ -215,7 +210,7 @@ class handler(BaseHTTPRequestHandler):
                 else: cap = 9999
                 problem += pulp.lpSum(total_partner_hours) <= cap
 
-                # スキル (ソフト制約)
+                # スキル (ソフト)
                 for skill_name, min_val in min_skills.items():
                     if min_val > 0:
                         skill_sum = pulp.lpSum([
@@ -226,23 +221,22 @@ class handler(BaseHTTPRequestHandler):
                         problem += skill_sum + shortage >= min_val
                         obj_vars.append(shortage * -100)
 
-                # 部門の網羅性 (ソフト制約)
+                # 部門の網羅性 (ソフト)
                 for dept_name, members in dept_groups.items():
                     if len(members) == 0: continue
                     dept_work_sum = pulp.lpSum([x[d, s, st] for s in members for st in ["A","B","C"]])
                     dept_missing = pulp.LpVariable(f"missing_{d}_{dept_name}", 0, 1, pulp.LpBinary)
                     problem += dept_work_sum >= 1 - dept_missing
-                    obj_vars.append(dept_missing * -2000) # 不在なら-2000点
+                    obj_vars.append(dept_missing * -2000)
 
-                # ★追加: 土日の社員クラス出勤ボーナス
+                # 土日の社員クラス出勤ボーナス
                 if is_weekend:
                     for s in employees:
-                        # 会議(M)以外の出勤で加点
                         obj_vars.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) * 1000)
 
-            # --- 4. 個人制約 & スケジュールルール ---
+            # --- 4. 個人制約 ---
             
-            # 全員共通: 7連勤禁止 (絶対)
+            # 全員共通: 7連勤禁止
             for s in staff_ids:
                 for i in range(DAYS_IN_MONTH - 6):
                     window = days[i : i+7]
@@ -255,9 +249,21 @@ class handler(BaseHTTPRequestHandler):
                         problem += x[d, s, "B"] == 0
                         problem += x[d, s, "C"] == 0
 
-                # 上限日数は必ず守る
+                # ★修正: 上限日数の計算 (有給分を差し引く)
                 max_days = staffs[s].get("maxDays", 22)
-                problem += pulp.lpSum([x[d, s, st] for d in days for st in shift_types]) == max_days
+                paid_leave_count = 0
+                for d in days:
+                    req = request_map[d].get(s, {})
+                    if req.get("type") == "有給":
+                        paid_leave_count += 1
+                
+                # 実際に働ける日数 = 設定上限 - 有給日数
+                workable_days = max_days - paid_leave_count
+                problem += pulp.lpSum([x[d, s, st] for d in days for st in shift_types if st != "M"]) <= workable_days # 会議は労働日数に含めるならMも含める、今回は含めるので修正↓
+                # もし会議も「出勤日数」としてカウントするなら：
+                # problem += pulp.lpSum([x[d, s, st] for d in days for st in shift_types]) <= workable_days
+                # 一般的には有給込みで上限なので、ここではシンプルに「出勤(A/B/C/M) <= 上限 - 有給」とします。
+                problem += pulp.lpSum([x[d, s, st] for d in days for st in shift_types]) <= workable_days
 
                 # 連勤ペナルティ (4連勤以上)
                 for i in range(DAYS_IN_MONTH - 3):
@@ -288,22 +294,18 @@ class handler(BaseHTTPRequestHandler):
 
             for s in list(partners) + list(newcomers):
                 is_new = (s in newcomers)
-                
                 for d in days:
                     if s in meetings.get(d, []): continue
                     req = request_map[d].get(s, {})
                     r_type = req.get("type")
 
-                    # 希望以外禁止
                     if not r_type:
                         problem += pulp.lpSum([x[d, s, st] for st in shift_types]) == 0
                         continue
-
                     if r_type == "有給" or r_type == "希望休":
                         problem += pulp.lpSum([x[d, s, st] for st in shift_types]) == 0
                         continue
 
-                    # 出勤ロジック
                     if is_new:
                         problem += pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) == 1
                     else:
@@ -315,13 +317,11 @@ class handler(BaseHTTPRequestHandler):
                     elif r_type == "早番": problem += x[d, s, "A"] == 1
                     elif r_type == "中番": problem += x[d, s, "B"] == 1
                     elif r_type == "遅番": problem += x[d, s, "C"] == 1
-                    elif r_type == "時間指定":
-                        problem += pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) == 1
+                    elif r_type == "時間指定": problem += pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) == 1
 
             # ==========================================
             # 5. 実行
             # ==========================================
-            # 早番優先 (A > B > C)
             shift_bias = {"A": 1.2, "B": 1.05, "C": 1.0}
 
             for d in days:
