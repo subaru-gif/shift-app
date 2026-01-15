@@ -41,6 +41,8 @@ class handler(BaseHTTPRequestHandler):
             docs = db.collection("staffs").stream()
             
             # グループ分け
+            dept_groups = {"家電": [], "季節": [], "情報": [], "通信": []}
+            
             store_managers = [] # 店長 (Rank 1)
             leaders_and_managers = [] # 店長・リーダー (Rank 1, 2)
             employees = [] # 店長・リーダー・社員 (Rank <= 3)
@@ -61,6 +63,11 @@ class handler(BaseHTTPRequestHandler):
                 else: rank_id = data.get("rankId", 99)
                 
                 staffs[doc.id]["rankId"] = rank_id # 補正値を保存
+
+                # 部門分け
+                dept = data.get("department")
+                if dept in dept_groups:
+                    dept_groups[dept].append(doc.id)
 
                 if rank_id == 1: store_managers.append(doc.id)
                 if rank_id <= 2: leaders_and_managers.append(doc.id)
@@ -104,7 +111,6 @@ class handler(BaseHTTPRequestHandler):
             staff_ids = list(staffs.keys())
             days = [str(d) for d in range(1, DAYS_IN_MONTH + 1)]
 
-            # 変数定義
             x = {}
             for d in days:
                 for s in staff_ids:
@@ -123,30 +129,29 @@ class handler(BaseHTTPRequestHandler):
                 for s in staff_ids:
                     problem += pulp.lpSum([x[d, s, st] for st in shift_types]) <= 1
 
-                # 会議 (絶対適用・労働時間外・店舗不在)
+                # 会議 (絶対適用・ユーザー登録日のみ)
+                # 自動割り振りはしない（変数は用意しているが、制約で縛る）
                 meeting_members = meetings.get(d, [])
-                for s in meeting_members:
-                    if s in staff_ids:
-                        problem += x[d, s, "M"] == 1 # 会議シフト確定
-                        # 他のシフトは不可
+                for s in staff_ids:
+                    if s in meeting_members:
+                        # 登録されている人はM確定
+                        problem += x[d, s, "M"] == 1 
                         problem += x[d, s, "A"] + x[d, s, "B"] + x[d, s, "C"] == 0
+                    else:
+                        # 登録されていない人はM禁止
+                        problem += x[d, s, "M"] == 0
 
                 # --- 人数・鍵カウント用変数の準備 ---
-                # 会議(M)の人は店にいないのでカウントしない
-                
                 count_open_staff = [] # 10:00にいる人
                 count_close_staff = [] # 21:30にいる人
                 count_open_key = [] # 9:30にいる鍵持ち
                 count_close_key = [] # 21:30にいる鍵持ち
-                
-                # 労働時間の計算用 (パートナーのキャップ判定用)
                 total_partner_hours = [] 
 
                 for s in staff_ids:
                     req = request_map[d].get(s, {})
                     is_custom = (req.get("type") == "時間指定")
                     
-                    # 時間指定の開始・終了時刻
                     start_h = 99
                     end_h = 0
                     if is_custom:
@@ -155,85 +160,80 @@ class handler(BaseHTTPRequestHandler):
                         start_h = int(sh_str[0]) + int(sh_str[1])/60
                         end_h = int(eh_str[0]) + int(eh_str[1])/60
 
-                    # --- 変数の定義 ---
-                    # A(早番): 9:30-19:00 -> 9:30○, 10:00○, 21:30×
-                    # B(中番): 11:00-20:30 -> 9:30×, 10:00×, 21:30×
-                    # C(遅番): 12:00-21:30 -> 9:30×, 10:00×, 21:30○
-                    
-                    # 1. 開け人数 (10:00時点でいる人)
-                    # Aシフト or 時間指定(開始<=10:00)
+                    # 1. 開け人数 (10:00)
                     if is_custom:
-                        if start_h <= 10.0:
-                            count_open_staff.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
+                        if start_h <= 10.0: count_open_staff.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
                     else:
                         count_open_staff.append(x[d, s, "A"]) 
 
-                    # 2. 締め人数 (21:30時点でいる人)
-                    # Cシフト or 時間指定(終了>=21:30)
+                    # 2. 締め人数 (21:30)
                     if is_custom:
-                        if end_h >= 21.5:
-                            count_close_staff.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
+                        if end_h >= 21.5: count_close_staff.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
                     else:
                         count_close_staff.append(x[d, s, "C"])
 
-                    # 3. 鍵開け (9:30時点でいる鍵持ち)
-                    # Aシフト or 時間指定(開始<=9:30) かつ canOpen
+                    # 3. 鍵開け (9:30)
                     if staffs[s].get("canOpen"):
                         if is_custom:
-                            if start_h <= 9.5:
-                                count_open_key.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
+                            if start_h <= 9.5: count_open_key.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
                         else:
                             count_open_key.append(x[d, s, "A"])
 
-                    # 4. 鍵締め (21:30時点でいる鍵持ち)
-                    # Cシフト or 時間指定(終了>=21:30) かつ canClose
+                    # 4. 鍵締め (21:30)
                     if staffs[s].get("canClose"):
                         if is_custom:
-                            if end_h >= 21.5:
-                                count_close_key.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
+                            if end_h >= 21.5: count_close_key.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]))
                         else:
                             count_close_key.append(x[d, s, "C"])
 
-                    # 5. 労働時間 (パートナーのみ計算、新人は除外)
+                    # 5. 労働時間 (パートナーのみ)
                     if s in partners:
-                        # 簡易的に固定8時間とする (時間指定の場合は正確には差分だが、ここでは枠の確保のため8h換算)
                         total_partner_hours.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) * 8)
 
                 # --- 制約の適用 ---
-                # 開け・締め人数
                 problem += pulp.lpSum(count_open_staff) >= min_staff_counts.get("open", 3)
                 problem += pulp.lpSum(count_close_staff) >= min_staff_counts.get("close", 3)
 
-                # 労働時間キャップ (パートナーのみ)
-                # 売上に応じた上限
+                # パートナー労働時間キャップ
                 sales = int(daily_sales.get(d, 0))
                 if sales <= config_caps["salesLow"]: cap = config_caps["hoursLow"]
                 elif sales <= config_caps["salesHigh"]: cap = config_caps["hoursHigh"]
                 else: cap = 9999
-                
-                # 新人は含まない
                 problem += pulp.lpSum(total_partner_hours) <= cap
 
-                # スキル (ソフト制約: 足りなくても良いがペナルティ)
+                # スキル (ソフト制約)
                 for skill_name, min_val in min_skills.items():
                     if min_val > 0:
-                        # その日のスキル保有数合計
                         skill_sum = pulp.lpSum([
                             x[d, s, st] * (staffs[s].get("skills", {}).get(skill_name, 0))
                             for s in staff_ids for st in ["A","B","C"]
                         ])
-                        # 不足分を表す変数 (0以上)
                         shortage = pulp.LpVariable(f"shortage_{d}_{skill_name}", 0)
-                        # 合計 + 不足分 >= 必要数 (つまり 不足分 = 必要数 - 合計)
                         problem += skill_sum + shortage >= min_val
-                        # 目的関数で不足分を減点
-                        obj_vars.append(shortage * -100) # 不足1につき-100点
+                        obj_vars.append(shortage * -100)
+
+                # ★追加: 部門の網羅性 (ソフト制約)
+                # できるだけ全部門の人が1人以上いるようにする
+                for dept_name, members in dept_groups.items():
+                    if len(members) == 0: continue
+                    
+                    # その部門の出勤人数 (会議Mは除く)
+                    dept_work_sum = pulp.lpSum([x[d, s, st] for s in members for st in ["A","B","C"]])
+                    
+                    # 不在フラグ (0ならOK, 1なら不在)
+                    dept_missing = pulp.LpVariable(f"missing_{d}_{dept_name}", 0, 1, pulp.LpBinary)
+                    
+                    # dept_work_sum >= 1 - missing
+                    # 1人以上いれば missing=0 にできる。0人なら missing=1 になる。
+                    problem += dept_work_sum >= 1 - dept_missing
+                    
+                    # 不在ならペナルティ (-2000点)
+                    obj_vars.append(dept_missing * -2000)
 
             # --- 全員共通: 7連勤禁止 (絶対) ---
             for s in staff_ids:
                 for i in range(DAYS_IN_MONTH - 6):
                     window = days[i : i+7]
-                    # 会議(M)も出勤日に含まれるため shift_types 全てを合計
                     problem += pulp.lpSum([x[d, s, st] for d in window for st in shift_types]) <= 6
 
             # ==========================================
@@ -241,17 +241,13 @@ class handler(BaseHTTPRequestHandler):
             # ==========================================
             # 1日にリーダーor店長が合計2人以上 (絶対)
             for d in days:
-                # 会議(M)の人は店舗にいないためカウントしない
                 problem += pulp.lpSum([
                     x[d, s, st] for s in leaders_and_managers for st in ["A","B","C"]
                 ]) >= 2
 
             # 鍵開け・締め人員確保 (絶対)
             for d in days:
-                # 上で作ったリストを使用
-                # 9:30時点の鍵開け人員 >= 1
                 problem += pulp.lpSum(count_open_key) >= 1
-                # 21:30時点の鍵締め人員 >= 1
                 problem += pulp.lpSum(count_close_key) >= 1
 
             for s in employees:
@@ -266,20 +262,17 @@ class handler(BaseHTTPRequestHandler):
                 problem += pulp.lpSum([x[d, s, st] for d in days for st in shift_types]) == max_days
 
                 # 連勤ペナルティ (4連勤以上から)
-                # 連続する4日間すべて出勤ならペナルティ
                 for i in range(DAYS_IN_MONTH - 3):
                     d1, d2, d3, d4 = days[i], days[i+1], days[i+2], days[i+3]
                     is_4_con = pulp.LpVariable(f"c4_{s}_{d1}", 0, 1, pulp.LpBinary)
-                    # 4日間の出勤数 - 3 <= フラグ (4日出勤時のみフラグ1が可能)
                     s_sum = pulp.lpSum([x[d, s, st] for d in [d1, d2, d3, d4] for st in shift_types])
                     problem += s_sum - 3 <= is_4_con
-                    obj_vars.append(is_4_con * -500) # 4連勤1回につき-500点
+                    obj_vars.append(is_4_con * -500)
 
                 # 遅番の次は早番を避ける (ソフト)
                 for i in range(DAYS_IN_MONTH - 1):
                     d_curr = days[i]
                     d_next = days[i+1]
-                    # C -> A のパターン
                     is_interval_err = pulp.LpVariable(f"int_{s}_{d_curr}", 0, 1, pulp.LpBinary)
                     problem += x[d_curr, s, "C"] + x[d_next, s, "A"] - 1 <= is_interval_err
                     obj_vars.append(is_interval_err * -200)
@@ -290,11 +283,8 @@ class handler(BaseHTTPRequestHandler):
                     req = request_map[d].get(s, {})
                     r_type = req.get("type")
 
-                    # 有給 (絶対)
                     if r_type == "有給":
                         problem += pulp.lpSum([x[d, s, st] for st in shift_types]) == 0
-                    
-                    # 希望休 (可能なら適用＝出勤すると大ペナルティ)
                     elif r_type == "希望休":
                         for st in shift_types:
                             obj_vars.append(x[d, s, st] * -5000)
@@ -315,28 +305,23 @@ class handler(BaseHTTPRequestHandler):
                         problem += pulp.lpSum([x[d, s, st] for st in shift_types]) == 0
                         continue
 
-                    # 有給・希望休
                     if r_type == "有給" or r_type == "希望休":
                         problem += pulp.lpSum([x[d, s, st] for st in shift_types]) == 0
                         continue
 
                     # --- 出勤希望の場合 ---
                     
-                    # 新人: 全て導入 (絶対)
-                    # パートナー: 優先度に応じて重み付け
                     if is_new:
-                        # 絶対に出勤
+                        # 新人: 絶対出勤
                         problem += pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) == 1
                     else:
-                        # パートナー優先度 (1:高, 2:普, 3:低)
+                        # パートナー: 優先度に応じて重み付け
                         prio = str(staffs[s].get("priority", "2"))
                         weight = 100 if prio=="1" else 50 if prio=="2" else 10
-                        # 出勤したら加点
                         obj_vars.append(pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) * weight)
 
                     # シフト種の固定
                     if r_type == "フリー":
-                        # A, B, C のどれか
                         pass 
                     elif r_type == "早番":
                         problem += x[d, s, "A"] == 1
@@ -345,12 +330,22 @@ class handler(BaseHTTPRequestHandler):
                     elif r_type == "遅番":
                         problem += x[d, s, "C"] == 1
                     elif r_type == "時間指定":
-                        # 時間指定もA,B,Cの変数を1つ使う形にする（労働時間計算等で使用済み）
                         problem += pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) == 1
 
             # ==========================================
-            # 6. 解決
+            # 6. 目的関数 & 実行
             # ==========================================
+            # ★早番優先バイアス (A > B > C)
+            # フリーシフトや社員の埋め合わせ時に効く
+            shift_bias = {"A": 1.2, "B": 1.05, "C": 1.0}
+
+            for d in days:
+                for s in staff_ids:
+                    for st in ["A","B","C"]:
+                        bias = shift_bias.get(st, 1.0)
+                        # 基本スコアとして全変数にbiasを掛ける
+                        obj_vars.append(x[d, s, st] * bias)
+
             problem += pulp.lpSum(obj_vars)
             status = problem.solve(pulp.PULP_CBC_CMD(msg=0))
 
