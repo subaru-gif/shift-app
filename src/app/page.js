@@ -37,6 +37,9 @@ export default function Home() {
   const [previewRequestModalOpen, setPreviewRequestModalOpen] = useState(false);
   const [previewRequestData, setPreviewRequestData] = useState(null);
   
+  // 管理者修正用の一時ステート
+  const [editingRequests, setEditingRequests] = useState({});
+
   const [newStaffName, setNewStaffName] = useState("");
   const [newStaffRank, setNewStaffRank] = useState("パートナー");
   const [newStaffDept, setNewStaffDept] = useState("家電");
@@ -251,7 +254,7 @@ export default function Home() {
 
   const getWorkHours = (shiftCode, start, end) => {
     if (["A","B","C"].includes(shiftCode)) return 8; 
-    if (shiftCode === "M" || shiftCode === "会議" || shiftCode === "有給") return 0; // 有給は0時間
+    if (shiftCode === "M" || shiftCode === "会議" || shiftCode === "有給") return 0;
     if (shiftCode === "時間指定" && start && end) {
         const [sh, sm] = start.split(":").map(Number);
         const [eh, em] = end.split(":").map(Number);
@@ -262,14 +265,13 @@ export default function Home() {
     return 0;
   };
 
-  // ★修正: 有給を表示
   const getShiftDisplay = (shiftCode, start, end) => {
     if (shiftCode === "A") return "早";
     if (shiftCode === "B") return "中";
     if (shiftCode === "C") return "遅";
     if (shiftCode === "M") return "議";
     if (shiftCode === "会議") return "議";
-    if (shiftCode === "有給") return "有"; // 有給を表示
+    if (shiftCode === "有給") return "有";
     if (shiftCode === "希望休") return "希";
     if (shiftCode === "フリー") return "全";
     
@@ -286,47 +288,30 @@ export default function Home() {
     return shiftCode || "";
   };
 
+  // ★修正: 並び替えロジック (季節 > 家電 > 情報 > 通信)
   const getSortedStaffs = () => {
     const deptOrder = { "季節": 1, "家電": 2, "情報": 3, "通信": 4 };
     return [...staffs].sort((a, b) => {
-      // 店長・リーダー(1,2)は部門関係なく一番上
-      if (a.rankId <= 2 && b.rankId > 2) return -1;
-      if (a.rankId > 2 && b.rankId <= 2) return 1;
-      // 両方リーダー以上ならランク順
-      if (a.rankId <= 2 && b.rankId <= 2) return a.rankId - b.rankId;
-
-      // 以下、一般スタッフは部門順
+      // 1. まず部門順
       const deptA = deptOrder[a.department] || 99;
       const deptB = deptOrder[b.department] || 99;
       if (deptA !== deptB) return deptA - deptB;
       
-      // 同じ部門ならランク順
+      // 2. 同じ部門なら役職順 (RankID: 1=店長, 2=リーダー...)
       return a.rankId - b.rankId;
     });
   };
 
-  const openPreview = (reqData) => {
-    setPreviewRequestData(reqData);
-    setSelectedStaffId(reqData.staffId); 
-    setRequests(reqData.requests || {}); 
-    setPreviewRequestModalOpen(true);
-  }
-  
+  // 管理者修正用: 日付クリック
   const startAdminEdit = (d) => {
-    const targetReqs = (previewRequestData.staffId === selectedStaffId) ? requests : (previewRequestData.requests || {});
-    
-    if (previewRequestData.staffId !== selectedStaffId) {
-        setSelectedStaffId(previewRequestData.staffId);
-        setRequests(targetReqs);
-    }
-    
     setSelectedDay(d);
     setIsPaidLeaveSelected(false);
     setIsFreeSelected(false);
     setCustomStart("09:30");
     setCustomEnd("15:00");
 
-    const req = targetReqs[d];
+    // editingRequests (一時編集用) から取得
+    const req = editingRequests[d];
     if (req) {
         if (req.type === "時間指定") {
             setCustomStart(req.start);
@@ -340,6 +325,14 @@ export default function Home() {
     setModalOpen(true);
   };
 
+  // 管理者: プレビューを開く
+  const openPreview = (reqData) => {
+    setPreviewRequestData(reqData);
+    setEditingRequests(reqData.requests || {}); // 一時ステートにコピー
+    setPreviewRequestModalOpen(true);
+  }
+
+  // 一般スタッフ用: 日付クリック
   const handleDateClick = (day) => {
     if (!selectedStaffId) { alert("先に名前を選択してください"); return; }
     setSelectedDay(day);
@@ -362,35 +355,51 @@ export default function Home() {
     setModalOpen(true);
   };
   
+  // モーダル内: 保存 (一般はrequests, 管理者はeditingRequests)
   const saveRequest = (type, start = "", end = "") => {
-    setRequests(prev => ({ ...prev, [selectedDay]: { type, start, end } }));
+    if (isAdmin && previewRequestModalOpen) {
+        setEditingRequests(prev => ({ ...prev, [selectedDay]: { type, start, end } }));
+    } else {
+        setRequests(prev => ({ ...prev, [selectedDay]: { type, start, end } }));
+    }
     setModalOpen(false);
   };
+
   const removeRequest = () => {
-    setRequests(prev => { const d = { ...prev }; delete d[selectedDay]; return d; });
+    if (isAdmin && previewRequestModalOpen) {
+        setEditingRequests(prev => { const d = { ...prev }; delete d[selectedDay]; return d; });
+    } else {
+        setRequests(prev => { const d = { ...prev }; delete d[selectedDay]; return d; });
+    }
     setModalOpen(false);
   };
 
   const handleSubmit = async () => {
-    if (!selectedStaffId) return;
-    const staff = staffs.find(s => s.id === selectedStaffId);
-    if(!confirm(isAdmin ? `変更を保存しますか？` : `提出しますか？`)) return;
+    // 対象のStaffID: 管理者ならプレビュー中の人、一般なら選択中の人
+    const targetStaffId = isAdmin && previewRequestData ? previewRequestData.staffId : selectedStaffId;
+    if (!targetStaffId) return;
+    
+    // 保存するデータ: 管理者ならeditingRequests, 一般ならrequests
+    const dataToSave = isAdmin && previewRequestData ? editingRequests : requests;
+
+    const staff = staffs.find(s => s.id === targetStaffId);
+    if(!confirm(isAdmin ? `変更を確定して保存しますか？` : `提出しますか？`)) return;
     
     const q = query(collection(db, "shifts"), where("staffId", "==", staff.id), where("year", "==", year), where("month", "==", month));
     const snap = await getDocs(q);
     snap.forEach(async (d) => { await deleteDoc(doc(db, "shifts", d.id)); });
 
     await addDoc(collection(db, "shifts"), {
-      staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests, createdAt: new Date()
+      staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests: dataToSave, createdAt: new Date()
     });
     alert("✅ 保存しました"); 
     
     if(isAdmin) {
        setAllRequests(prev => {
          const filtered = prev.filter(r => r.staffId !== staff.id);
-         return [...filtered, { staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests }];
+         return [...filtered, { staffId: staff.id, name: staff.name, rank: staff.rank, year, month, requests: dataToSave }];
        });
-       setPreviewRequestData({ ...previewRequestData, requests: requests });
+       setPreviewRequestData({ ...previewRequestData, requests: dataToSave });
        setPreviewRequestModalOpen(false); 
     } else {
        setRequests({}); setSelectedStaffId(""); 
@@ -446,10 +455,9 @@ export default function Home() {
   };
 
   const currentStaff = staffs.find(s => s.id === selectedStaffId);
-  const isEmployee = currentStaff && (currentStaff.rankId <= 3); // 数値判定に変更
+  const isEmployee = currentStaff && (currentStaff.rankId <= 3); 
   const isPart = currentStaff && !isEmployee;
 
-  // ソート済みスタッフリストを取得
   const sortedStaffs = getSortedStaffs();
 
   return (
@@ -620,7 +628,7 @@ export default function Home() {
                    </div>
 
                    <div className="space-y-2 h-[600px] overflow-y-auto pr-2">
-                      {getSortedStaffs().map(s => {
+                      {sortedStaffs.map(s => {
                         const isPart = ["パートナー", "新規パートナー"].includes(s.rank);
                         return (
                         <div key={s.id} className="bg-white p-2 border rounded text-xs">
@@ -718,10 +726,13 @@ export default function Home() {
                   </thead>
                   <tbody>
                     {sortedStaffs.map((s, index) => {
-                      // ★修正: 部門が変わるタイミングで黒枠を追加
-                      const prevDept = index > 0 ? sortedStaffs[index - 1].department : null;
-                      const isDeptChanged = index > 0 && prevDept !== s.department && s.rankId > 2; // リーダー以上は特別扱いなので除外
+                      // 部門が変わるタイミングで太線
+                      const prevDept = index > 0 ? sortedStaffs[index-1].department : null;
+                      const isDeptChanged = index > 0 && s.department !== prevDept;
                       const borderClass = isDeptChanged ? "border-t-4 border-black" : "";
+
+                      // スタッフ個人の希望データを取得 (表示用)
+                      const staffReqData = allRequests.find(r => r.staffId === s.id);
 
                       return (
                       <tr key={s.id} className={`hover:bg-gray-50 ${borderClass}`}>
@@ -734,20 +745,34 @@ export default function Home() {
                         {[...Array(daysInMonth)].map((_, i) => {
                            const d = String(i+1);
                            const shift = (determinedSchedule[d] || []).find(x => x.staffId === s.id);
+                           const req = staffReqData?.requests?.[d];
+
                            let disp = "", cls = "";
+                           
                            if (shift) {
+                             // AIが決めたシフトがある場合
                              disp = getShiftDisplay(shift.shift, shift.start, shift.end);
                              if(disp==="早") cls="text-blue-600 font-bold bg-blue-50";
                              if(disp==="中") cls="text-green-600 font-bold bg-green-50";
                              if(disp==="遅") cls="text-orange-600 font-bold bg-orange-50";
                              if(disp==="議") cls="text-purple-600 font-bold bg-purple-50";
-                             if(disp==="有") cls="text-pink-600 font-bold bg-pink-50"; // 有給スタイル
                              if(disp.length > 2) cls="text-xs text-gray-600 bg-gray-50 font-bold";
+                           } else if (req) {
+                             // シフトがない場合、希望（有給・希望休）を表示
+                             if (req.type === "有給") {
+                                disp = "有";
+                                cls = "text-pink-600 font-bold bg-pink-50";
+                             } else if (req.type === "希望休") {
+                                disp = "希";
+                                cls = "text-red-400 font-bold bg-red-50";
+                             }
                            }
+
                            return <td key={i} className={`border h-8 ${cls}`}>{disp}</td>;
                         })}
                       </tr>
                     )})}
+                    {/* 以下、集計行 */}
                     <tr className="bg-gray-100 font-bold border-t-2">
                        <td className="p-2 border sticky left-0 bg-gray-100">日別スキル充足</td>
                        {[...Array(daysInMonth)].map((_, i) => {
@@ -822,7 +847,7 @@ export default function Home() {
           </div>
         )}
         
-        {/* 提出一覧モーダル (管理者修正用) */}
+        {/* 提出一覧モーダル (管理者修正用: リアルタイム反映 + 黄色検知) */}
         {previewRequestModalOpen && previewRequestData && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={()=>setPreviewRequestModalOpen(false)}>
              <div className="bg-white w-full max-w-md rounded-xl p-6 shadow-2xl overflow-y-auto max-h-[80vh]" onClick={e=>e.stopPropagation()}>
@@ -834,7 +859,10 @@ export default function Home() {
                  {['日','月','火','水','木','金','土'].map((d,i)=><div key={i} className="font-bold">{d}</div>)}
                  {[...Array(daysInMonth)].map((_,i)=>{
                     const d = i+1;
-                    const req = requests[d];
+                    // 現在編集中の editingRequests を参照
+                    const req = editingRequests[d];
+                    
+                    // 変更検知: オリジナルと比較
                     const originalReq = previewRequestData.requests[d];
                     const isChanged = JSON.stringify(req) !== JSON.stringify(originalReq);
                     
