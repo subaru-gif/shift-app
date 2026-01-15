@@ -49,12 +49,25 @@ class handler(BaseHTTPRequestHandler):
                 staffs[doc.id] = data
                 dept = data.get("department")
                 
-                # 役職名からRankIDを補正
+                # ★修正: 役職名からRankIDを強力に補正
+                # データ上のIDがずれていても、名前が合っていれば正しく認識させる
                 rank_str = data.get("rank", "")
+                
                 if rank_str == "店長":
                     rank_id = 1
+                elif rank_str == "リーダー":
+                    rank_id = 2
+                elif rank_str == "社員":
+                    rank_id = 3
+                elif rank_str == "パートナー":
+                    rank_id = 4
+                elif rank_str == "新規パートナー":
+                    rank_id = 5
                 else:
                     rank_id = data.get("rankId", 99)
+
+                # 補正したrank_idを保存（メモリ上のみ）
+                staffs[doc.id]["rankId"] = rank_id
 
                 if dept in dept_groups:
                     dept_groups[dept].append(doc.id)
@@ -64,6 +77,7 @@ class handler(BaseHTTPRequestHandler):
                 elif rank_id <= 3:
                     mentors.append(doc.id)
                 
+                # リーダー以上 (Rank 1 or 2)
                 if rank_id <= 2:
                     leaders.append(doc.id)
                 
@@ -118,7 +132,7 @@ class handler(BaseHTTPRequestHandler):
                     problem += x[d, sm, "C"] == 0
 
             for d in days:
-                # 会議
+                # 会議 (会議の人は労働人数としてカウントされないので注意)
                 meeting_members = meetings.get(d, [])
                 for s in meeting_members:
                     if s in staff_ids:
@@ -188,12 +202,12 @@ class handler(BaseHTTPRequestHandler):
                         mentors_working = pulp.lpSum([x[d, m, st] for m in mentors for st in ["A","B","C"]])
                         problem += nc_working <= mentors_working
 
-                # リーダー
+                # リーダー以上 (Rank 1, 2) が2人以上
+                # 会議(M)に入っているとカウントされないので注意
                 if leaders:
                     problem += pulp.lpSum([x[d, l, st] for l in leaders for st in ["A","B","C"]]) >= 2
 
             # --- 個人制約 ---
-            # 連勤対策用の変数
             consecutive_penalties = []
 
             for s in staff_ids:
@@ -211,34 +225,23 @@ class handler(BaseHTTPRequestHandler):
                             if str(d) not in request_map or s not in request_map[str(d)]:
                                 problem += pulp.lpSum([x[d, s, st] for st in shift_types]) == 0
 
-                # ★修正: 連勤制限 (7日間の合計出勤数 <= 6) => 7連勤禁止
+                # 7連勤禁止
                 for i in range(DAYS_IN_MONTH - 6):
-                    window_days = days[i : i+7] # 7日間
+                    window_days = days[i : i+7] 
                     problem += pulp.lpSum([x[d, s, st] for d in window_days for st in shift_types]) <= 6
                 
-                # ★追加: 社員以上(Rank<=3)の3連勤以上ペナルティ
-                # 連続する3日間 (d, d+1, d+2) が全て出勤ならペナルティ変数を1にする
+                # 社員以上(Rank<=3)の3連勤以上ペナルティ
                 if rank_id <= 3:
                     for i in range(DAYS_IN_MONTH - 2):
                         d1 = days[i]
                         d2 = days[i+1]
                         d3 = days[i+2]
-                        
-                        # 3日間すべて働くかどうかを表す変数 (0 or 1)
                         is_3_consecutive = pulp.LpVariable(f"c3_{s}_{d1}", 0, 1, pulp.LpBinary)
-                        
-                        # 制約: (d1出勤 + d2出勤 + d3出勤) - 3連勤フラグ <= 2
-                        # つまり、3日とも出勤(合計3)の場合のみ、フラグが1になることを強制できる(目的関数でマイナスにするため)
-                        # ここでは緩和問題として「フラグが1なら3連勤」とするため
-                        # d1+d2+d3 >= 3 * is_3_consecutive だと、出勤してないのにフラグ1にできてしまう
-                        # 逆に d1+d2+d3 - 2 <= is_3_consecutive だと、3連勤なら 1 <= flag となりフラグが立つ
-                        
                         work_sum = pulp.lpSum([x[d, s, st] for d in [d1, d2, d3] for st in shift_types])
                         problem += work_sum - 2 <= is_3_consecutive
-                        
                         consecutive_penalties.append(is_3_consecutive)
 
-                # インターバル (遅番 -> 早番 禁止)
+                # インターバル
                 for d_int in range(1, DAYS_IN_MONTH):
                     d_curr = str(d_int)
                     d_next = str(d_int + 1)
@@ -250,33 +253,27 @@ class handler(BaseHTTPRequestHandler):
 
             for d in days:
                 for s in staff_ids:
-                    # 希望シフト処理
                     if s in meetings.get(d, []): continue
                     req = request_map[d].get(s, {})
                     r_type = req.get("type")
 
-                    # 有給 (絶対厳守)
                     if r_type == "有給":
                         problem += pulp.lpSum([x[d, s, st] for st in shift_types]) == 0
                     
-                    # 希望休 (★修正: ペナルティ方式へ変更)
+                    # 希望休 (ペナルティ)
                     elif r_type == "希望休":
-                        # 出勤してしまったら大幅減点 (-5000点)
-                        # これにより「基本は休み」だが「詰むくらいなら出勤」になる
                         for st in shift_types:
                             obj_vars.append(x[d, s, st] * -5000.0)
 
-                    # フリー
                     elif r_type == "フリー":
                         problem += pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) == 1
-                    # 時間指定など
                     elif r_type in ["早番", "中番", "遅番"]:
                         target = "A" if r_type=="早番" else "B" if r_type=="中番" else "C"
                         problem += x[d, s, target] == 1
                     elif r_type == "時間指定":
                         problem += pulp.lpSum([x[d, s, st] for st in ["A","B","C"]]) == 1
 
-                    # 基本スコア (出勤すると加点)
+                    # 基本スコア
                     rank_id = staffs[s].get("rankId", 99)
                     if rank_id <= 3:
                         weight = 100.0
@@ -290,10 +287,7 @@ class handler(BaseHTTPRequestHandler):
                         bias = shift_bias.get(st, 1.0)
                         obj_vars.append(x[d, s, st] * weight * bias)
             
-            # ペナルティ項の追加
-            # 社員の3連勤ペナルティ (1回につき -50点)
-            # 4連勤だと、(1-2-3日目)と(2-3-4日目)で2回カウントされるので -100点になる
-            # これで「長く続くほど嫌がる」ロジックになる
+            # 連勤ペナルティ反映
             for p_var in consecutive_penalties:
                 obj_vars.append(p_var * -50.0)
 
