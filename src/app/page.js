@@ -288,16 +288,23 @@ export default function Home() {
     return shiftCode || "";
   };
 
-  // ★修正: 並び替えロジック (季節 > 家電 > 情報 > 通信)
+  // ★修正: 並び替えロジック
+  // 1. 店長 (RankId=1) は部門関係なく最優先
+  // 2. その後は部門順 (季節 > 家電 > 情報 > 通信)
+  // 3. 同じ部門なら役職順
   const getSortedStaffs = () => {
     const deptOrder = { "季節": 1, "家電": 2, "情報": 3, "通信": 4 };
     return [...staffs].sort((a, b) => {
-      // 1. まず部門順
+      // 1. 店長最優先
+      if (a.rankId === 1 && b.rankId !== 1) return -1;
+      if (a.rankId !== 1 && b.rankId === 1) return 1;
+
+      // 2. 部門順
       const deptA = deptOrder[a.department] || 99;
       const deptB = deptOrder[b.department] || 99;
       if (deptA !== deptB) return deptA - deptB;
       
-      // 2. 同じ部門なら役職順 (RankID: 1=店長, 2=リーダー...)
+      // 3. 役職順
       return a.rankId - b.rankId;
     });
   };
@@ -375,11 +382,9 @@ export default function Home() {
   };
 
   const handleSubmit = async () => {
-    // 対象のStaffID: 管理者ならプレビュー中の人、一般なら選択中の人
     const targetStaffId = isAdmin && previewRequestData ? previewRequestData.staffId : selectedStaffId;
     if (!targetStaffId) return;
     
-    // 保存するデータ: 管理者ならeditingRequests, 一般ならrequests
     const dataToSave = isAdmin && previewRequestData ? editingRequests : requests;
 
     const staff = staffs.find(s => s.id === targetStaffId);
@@ -667,11 +672,7 @@ export default function Home() {
                              {[...Array(daysInMonth)].map((_, i) => {
                                const d = String(i+1);
                                const isMeeting = meetingSchedule[d]?.includes(s.id);
-                               return (
-                                 <button key={d} onClick={()=>toggleMeeting(d, s.id)} 
-                                   className={`w-5 h-5 flex items-center justify-center rounded text-[9px] ${isMeeting ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-300'}`}
-                                 >{d}</button>
-                               )
+                               return (<button key={d} onClick={()=>toggleMeeting(d, s.id)} className={`w-5 h-5 flex items-center justify-center rounded text-[9px] ${isMeeting ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-300'}`}>{d}</button>)
                              })}
                           </div>
                         </div>
