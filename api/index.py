@@ -123,7 +123,6 @@ class handler(BaseHTTPRequestHandler):
             # 3. 日別ループで制約を一括適用
             # ==========================================
             for d in days:
-                # 曜日判定 (土=5, 日=6)
                 current_date = datetime.date(TARGET_YEAR, TARGET_MONTH, int(d))
                 is_weekend = current_date.weekday() >= 5
 
@@ -236,6 +235,14 @@ class handler(BaseHTTPRequestHandler):
 
             # --- 4. 個人制約 ---
             
+            # ★追加: 村上 秀人 特別ルール (早番固定)
+            # 名前が一致するスタッフは、中番(B)と遅番(C)を絶対禁止
+            for s in staff_ids:
+                if staffs[s].get("name", "") == "村上　秀人":
+                    for d in days:
+                        problem += x[d, s, "B"] == 0
+                        problem += x[d, s, "C"] == 0
+
             # 全員共通: 7連勤禁止
             for s in staff_ids:
                 for i in range(DAYS_IN_MONTH - 6):
@@ -249,7 +256,7 @@ class handler(BaseHTTPRequestHandler):
                         problem += x[d, s, "B"] == 0
                         problem += x[d, s, "C"] == 0
 
-                # ★修正: 上限日数の計算 (有給分を差し引く)
+                # 上限日数 (有給分を差し引く)
                 max_days = staffs[s].get("maxDays", 22)
                 paid_leave_count = 0
                 for d in days:
@@ -257,12 +264,7 @@ class handler(BaseHTTPRequestHandler):
                     if req.get("type") == "有給":
                         paid_leave_count += 1
                 
-                # 実際に働ける日数 = 設定上限 - 有給日数
                 workable_days = max_days - paid_leave_count
-                problem += pulp.lpSum([x[d, s, st] for d in days for st in shift_types if st != "M"]) <= workable_days # 会議は労働日数に含めるならMも含める、今回は含めるので修正↓
-                # もし会議も「出勤日数」としてカウントするなら：
-                # problem += pulp.lpSum([x[d, s, st] for d in days for st in shift_types]) <= workable_days
-                # 一般的には有給込みで上限なので、ここではシンプルに「出勤(A/B/C/M) <= 上限 - 有給」とします。
                 problem += pulp.lpSum([x[d, s, st] for d in days for st in shift_types]) <= workable_days
 
                 # 連勤ペナルティ (4連勤以上)
