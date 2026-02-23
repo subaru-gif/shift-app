@@ -428,7 +428,11 @@ export default function Home() {
     try {
       alert("🤖 計算中...");
       await saveConfig(); 
-      const res = await fetch('/api', { method: 'POST' }); 
+      const res = await fetch('/api', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year, month, daysInMonth })
+      }); 
       if (res.ok) {
         const data = await res.json();
         alert("✨ " + data.message);

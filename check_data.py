@@ -10,10 +10,18 @@ if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 db = firestore.client()
 
+import os
+
 # 設定：計算したい年月（Webで入力した月と同じにしてください）
-TARGET_YEAR = 2026
-TARGET_MONTH = 2
-DAYS_IN_MONTH = 28 # ※2月なのでとりあえず28（後で自動化します）
+today = datetime.today()
+next_month_date = (today.replace(day=1) + pd.Timedelta(days=32)).replace(day=1)
+
+TARGET_YEAR = int(os.environ.get("TARGET_YEAR", next_month_date.year))
+TARGET_MONTH = int(os.environ.get("TARGET_MONTH", next_month_date.month))
+
+import calendar
+DAYS_IN_MONTH = calendar.monthrange(TARGET_YEAR, TARGET_MONTH)[1]
+DAYS_IN_MONTH = int(os.environ.get("DAYS_IN_MONTH", DAYS_IN_MONTH))
 
 print(f"🤖 AIデータ読み込み開始: {TARGET_YEAR}年{TARGET_MONTH}月")
 print("-" * 40)

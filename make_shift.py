@@ -6,10 +6,19 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
+import os
+import datetime
+
 # --- 1. 設定 ---
-TARGET_YEAR = 2026
-TARGET_MONTH = 2
-DAYS_IN_MONTH = 28 
+# 環境変数またはデフォルト（次月）を設定
+today = datetime.date.today()
+next_month_date = (today.replace(day=1) + datetime.timedelta(days=32)).replace(day=1)
+
+TARGET_YEAR = int(os.environ.get("TARGET_YEAR", next_month_date.year))
+TARGET_MONTH = int(os.environ.get("TARGET_MONTH", next_month_date.month))
+# 簡易的に翌月1日から1日引いた日付けで日数を取得
+DAYS_IN_MONTH = (datetime.date(TARGET_YEAR, TARGET_MONTH, 1) + datetime.timedelta(days=32)).replace(day=1) - datetime.timedelta(days=1)
+DAYS_IN_MONTH = int(os.environ.get("DAYS_IN_MONTH", DAYS_IN_MONTH.day))
 
 if not firebase_admin._apps:
     cred = credentials.Certificate("serviceAccountKey.json")

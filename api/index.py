@@ -31,9 +31,18 @@ class handler(BaseHTTPRequestHandler):
             initialize_firebase()
             db = firestore.client()
 
-            TARGET_YEAR = 2026
-            TARGET_MONTH = 2
-            DAYS_IN_MONTH = 28
+            # リクエストからパラメータを取得
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length > 0:
+                body = self.rfile.read(content_length)
+                req_data = json.loads(body)
+                TARGET_YEAR = int(req_data.get('year', 2026))
+                TARGET_MONTH = int(req_data.get('month', 2))
+                DAYS_IN_MONTH = int(req_data.get('daysInMonth', 28))
+            else:
+                TARGET_YEAR = 2026
+                TARGET_MONTH = 2
+                DAYS_IN_MONTH = 28
 
             # ==========================================
             # 1. データ取得 & 整理
