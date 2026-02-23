@@ -283,13 +283,7 @@ export default function Home() {
       if (sh === 11 && sm === 0 && eh === 20 && em === 30) return "中";
       if (sh === 12 && sm === 0 && eh === 21 && em === 30) return "遅";
 
-      return (
-        <div className="flex flex-col items-center justify-center leading-tight">
-          <span>{formatTime(start)}</span>
-          <span className="text-[8px] text-gray-400">|</span>
-          <span>{formatTime(end)}</span>
-        </div>
-      );
+      return formatTime(start) + formatTime(end);
     }
     return shiftCode || "";
   };
@@ -512,9 +506,9 @@ export default function Home() {
                     disp = getShiftDisplay(req.type, req.start, req.end);
                   }
                   return (
-                    <div key={d} onClick={() => handleDateClick(d)} className={`min-h-[3rem] border rounded flex flex-col justify-center items-center cursor-pointer ${bg} ${bd} p-1 py-2`}>
+                    <div key={d} onClick={() => handleDateClick(d)} className={`aspect-square border rounded flex flex-col justify-center items-center cursor-pointer ${bg} ${bd}`}>
                       <span className="text-sm">{d}</span>
-                      {disp && <span className="text-[10px] mt-1">{disp}</span>}
+                      {disp && <span className="text-[10px]">{disp}</span>}
                     </div>
                   );
                 })}
@@ -708,11 +702,11 @@ export default function Home() {
               </div>
 
               <div className="overflow-x-auto border rounded-lg shadow-sm mb-8 bg-white">
-                <table className="min-w-full text-xs text-center border-collapse table-fixed">
+                <table className="min-w-full text-xs text-center border-collapse">
                   <thead>
                     <tr className="bg-gray-100 text-gray-600">
                       <th className="p-2 border whitespace-nowrap sticky left-0 bg-gray-100 z-10 w-40">項目 / 日付</th>
-                      {[...Array(daysInMonth)].map((_, i) => (<th key={i} className={`p-1 border w-12 min-w-[3rem] ${i % 7 === 0 ? 'text-red-500' : (i + 1) % 7 === 0 ? 'text-blue-500' : ''}`}>{i + 1}</th>))}
+                      {[...Array(daysInMonth)].map((_, i) => (<th key={i} className={`p-1 border w-10 ${i % 7 === 0 ? 'text-red-500' : (i + 1) % 7 === 0 ? 'text-blue-500' : ''}`}>{i + 1}</th>))}
                     </tr>
                     <tr className="bg-blue-50 font-bold">
                       <td className="p-1 border sticky left-0 bg-blue-50 text-left">総労働時間</td>
