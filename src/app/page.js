@@ -495,6 +495,7 @@ export default function Home() {
               </div>
               <div className="grid grid-cols-7 gap-1 mb-6 text-center text-sm select-none">
                 {['日', '月', '火', '水', '木', '金', '土'].map((d, i) => (<div key={i} className={`font-bold py-1 ${i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-gray-400'}`}>{d}</div>))}
+                {[...Array(new Date(year, month - 1, 1).getDay())].map((_, i) => <div key={`empty-${i}`} className="aspect-square border border-transparent"></div>)}
                 {[...Array(daysInMonth)].map((_, i) => {
                   const d = i + 1; const req = requests[d];
                   let bg = "bg-white", txt = "text-gray-700", bd = "border-gray-200", disp = "";
@@ -558,6 +559,7 @@ export default function Home() {
                   <h4 className="font-bold text-xs text-yellow-800 mb-2">日別売上予算</h4>
                   <div className="grid grid-cols-7 gap-1 text-center text-xs">
                     {['日', '月', '火', '水', '木', '金', '土'].map((d, i) => (<div key={i} className="font-bold text-gray-400">{d}</div>))}
+                    {[...Array(new Date(year, month - 1, 1).getDay())].map((_, i) => <div key={`empty-${i}`}></div>)}
                     {[...Array(daysInMonth)].map((_, i) => (
                       <div key={i + 1}>
                         <span className="block text-[9px] text-gray-400">{i + 1}日</span>
@@ -706,7 +708,7 @@ export default function Home() {
                   <thead>
                     <tr className="bg-gray-100 text-gray-600">
                       <th className="p-2 border whitespace-nowrap sticky left-0 bg-gray-100 z-10 w-40">項目 / 日付</th>
-                      {[...Array(daysInMonth)].map((_, i) => (<th key={i} className={`p-1 border w-10 ${i % 7 === 0 ? 'text-red-500' : (i + 1) % 7 === 0 ? 'text-blue-500' : ''}`}>{i + 1}</th>))}
+                      {[...Array(daysInMonth)].map((_, i) => (<th key={i} className={`p-1 border w-10 ${new Date(year, month - 1, i + 1).getDay() === 0 ? 'text-red-500' : new Date(year, month - 1, i + 1).getDay() === 6 ? 'text-blue-500' : ''}`}>{i + 1}</th>))}
                     </tr>
                     <tr className="bg-blue-50 font-bold">
                       <td className="p-1 border sticky left-0 bg-blue-50 text-left">総労働時間</td>
@@ -899,6 +901,7 @@ export default function Home() {
               </div>
               <div className="grid grid-cols-7 gap-1 text-center text-xs">
                 {['日', '月', '火', '水', '木', '金', '土'].map((d, i) => <div key={i} className="font-bold">{d}</div>)}
+                {[...Array(new Date(year, month - 1, 1).getDay())].map((_, i) => <div key={`empty-${i}`} className="aspect-square"></div>)}
                 {[...Array(daysInMonth)].map((_, i) => {
                   const d = i + 1;
                   // 現在編集中の editingRequests を参照
